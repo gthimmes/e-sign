@@ -1,6 +1,10 @@
 node_modules/
-data/*.db
-data/*.db-*
+# data/ holds the SQLite DB and the signing private key (signing.p12) — never commit
+data/*
+!data/.gitkeep
 uploads/
 *.log
+_*.mjs
+final.pdf
+_page*.png
 .DS_Store

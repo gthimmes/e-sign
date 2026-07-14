@@ -1,4 +1,5 @@
 import { renderPdf } from '/js/pdfview.js';
+import { requireSession } from '/js/session.js';
 
 const params = new URLSearchParams(location.search);
 const docId = params.get('id');
@@ -21,7 +22,7 @@ let keySeq = 1;
 
 const el = (id) => document.getElementById(id);
 
-init();
+if (await requireSession()) init();
 
 async function init() {
   const res = await fetch(`/api/documents/${docId}`);

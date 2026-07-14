@@ -1,13 +1,16 @@
+import { requireSession } from '/js/session.js';
+
 const docId = new URLSearchParams(location.search).get('id');
 const content = document.getElementById('content');
 
-load();
+if (await requireSession()) load();
 
 async function load() {
   const res = await fetch(`/api/documents/${docId}/audit`);
   if (!res.ok) { content.innerHTML = '<div class="empty">Document not found.</div>'; return; }
-  const { document: d, recipients, events } = await res.json();
+  const { document: d, recipients, events, certInfo } = await res.json();
   const base = location.origin;
+  const isSealed = events.some((e) => e.event_type === 'document.sealed');
 
   const links = recipients
     .filter((r) => r.status !== 'signed')
@@ -51,7 +54,17 @@ async function load() {
         Integrity hash at send (SHA-256): <code>${d.sha256_sent || '—'}</code><br>
         ${d.sha256_final ? `Final document (SHA-256): <code>${d.sha256_final}</code>` : ''}
       </p>
-    </div>`;
+    </div>
+
+    ${isSealed ? `<div class="card pad" style="margin-top:16px">
+      <h2>Digital seal</h2>
+      <p class="muted" style="font-size:13px; margin-top:0">The completed PDF is sealed with a PKCS#7 digital signature — any change after sealing is cryptographically detectable and verifiable in Adobe Reader.</p>
+      <div class="linklist" style="font-size:12px">
+        <div>Certificate: <strong>${esc(certInfo?.subject || '—')}</strong></div>
+        <div>Fingerprint (SHA-256): <code>${esc(certInfo?.fingerprintSha256 || '—')}</code></div>
+        <div>Valid: ${certInfo?.notBefore ? new Date(certInfo.notBefore).toLocaleDateString() : '—'} → ${certInfo?.notAfter ? new Date(certInfo.notAfter).toLocaleDateString() : '—'}</div>
+      </div>
+    </div>` : ''}`;
 
   const voidBtn = document.getElementById('voidBtn');
   if (voidBtn) voidBtn.onclick = async () => {

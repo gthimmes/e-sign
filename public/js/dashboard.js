@@ -1,3 +1,5 @@
+import { requireSession } from '/js/session.js';
+
 const rows = document.getElementById('rows');
 const drop = document.getElementById('drop');
 const file = document.getElementById('file');
@@ -84,4 +86,5 @@ function toast(msg) {
   setTimeout(() => t.classList.remove('show'), 2600);
 }
 
-load();
+const session = await requireSession();
+if (session) load();

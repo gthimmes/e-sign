@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Sign in — InkWell</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div class="topbar">
+    <div class="brand"><span class="dot">✒</span> InkWell</div>
+  </div>
+
+  <div class="wrap" style="max-width:420px">
+    <div class="card pad" style="margin-top:40px">
+      <h1 id="heading">Sign in</h1>
+      <p class="sub" id="subheading">Access your documents and send new ones for signature.</p>
+
+      <div id="error" class="banner warn" style="display:none"></div>
+
+      <label class="fld" id="nameLabel" style="display:none">Your name</label>
+      <input type="text" id="name" placeholder="Full name" style="display:none" />
+
+      <label class="fld">Email</label>
+      <input type="email" id="email" placeholder="you@example.com" autocomplete="username" />
+
+      <label class="fld">Password</label>
+      <input type="password" id="password" placeholder="••••••••" autocomplete="current-password" />
+
+      <button class="btn primary" id="submitBtn" style="width:100%; justify-content:center; margin-top:18px">Sign in</button>
+
+      <p class="muted" style="text-align:center; margin-top:16px; font-size:13px">
+        <span id="toggleText">New to InkWell?</span>
+        <a href="#" id="toggleLink">Create an account</a>
+      </p>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+  <script type="module" src="/js/login.js"></script>
+</body>
+</html>

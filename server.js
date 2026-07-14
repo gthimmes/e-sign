@@ -9,15 +9,27 @@ import { PDFDocument } from 'pdf-lib';
 import db, { transaction } from './db.js';
 import { newId, newToken, nowIso, sha256, logEvent, clientIp, getEvents } from './lib/audit.js';
 import { buildFinalPdf } from './lib/pdfStamp.js';
+import { ensureSigningCert, getCertInfo, sealPdf } from './lib/pki.js';
+import {
+  createUser, getUserByEmail, verifyPassword, createSession, destroySession,
+  setSessionCookie, clearSessionCookie, loadUser, requireAuth,
+} from './lib/auth.js';
+import { sendInvitation, sendCompletion, emailMode } from './lib/email.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const UPLOAD_DIR = path.join(__dirname, 'uploads');
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
+ensureSigningCert(); // generate the signing cert on first boot
+
 const app = express();
 app.set('trust proxy', true);
 app.use(express.json({ limit: '20mb' }));
+app.use(loadUser);
 app.use(express.static(path.join(__dirname, 'public')));
+
+const baseUrl = (req) => `${req.protocol}://${req.get('host')}`;
+const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 
 const upload = multer({
   storage: multer.diskStorage({
@@ -51,6 +63,52 @@ function docPayload(id) {
 
 const asyncH = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
+// Fetch a document the current user owns, or send 404/403. Legacy documents with
+// no owner (created before auth) are claimable by any signed-in user.
+function ownedDoc(req, res) {
+  const d = q.doc.get(req.params.id);
+  if (!d) { res.status(404).json({ error: 'Not found' }); return null; }
+  if (d.owner_id && d.owner_id !== req.user.id) { res.status(403).json({ error: 'Not your document.' }); return null; }
+  return d;
+}
+
+// ---- auth ----------------------------------------------------------------
+
+app.get('/api/auth/me', (req, res) => {
+  res.json({ user: req.user ? { id: req.user.id, email: req.user.email, name: req.user.name } : null, emailMode });
+});
+
+app.post('/api/auth/register', (req, res) => {
+  const { email, name, password } = req.body || {};
+  if (!email || !EMAIL_RE.test(email)) return res.status(400).json({ error: 'A valid email is required.' });
+  if (!password || password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters.' });
+  if (getUserByEmail(email)) return res.status(409).json({ error: 'An account with that email already exists.' });
+  const user = createUser({ email, name, password });
+  const session = createSession(user.id);
+  setSessionCookie(res, session);
+  res.json({ user: { id: user.id, email: user.email, name: user.name } });
+});
+
+app.post('/api/auth/login', (req, res) => {
+  const { email, password } = req.body || {};
+  const user = getUserByEmail(email || '');
+  if (!user || !verifyPassword(password || '', user.password_hash)) {
+    return res.status(401).json({ error: 'Incorrect email or password.' });
+  }
+  const session = createSession(user.id);
+  setSessionCookie(res, session);
+  res.json({ user: { id: user.id, email: user.email, name: user.name } });
+});
+
+app.post('/api/auth/logout', (req, res) => {
+  destroySession(req.sessionId);
+  clearSessionCookie(res);
+  res.json({ ok: true });
+});
+
+// Everything under /api/documents (authoring) requires a signed-in user.
+app.use('/api/documents', requireAuth);
+
 // ---- document authoring --------------------------------------------------
 
 app.post(
@@ -70,16 +128,18 @@ app.post(
     const id = newId();
     const title = (req.body.title || req.file.originalname.replace(/\.pdf$/i, '')).slice(0, 200);
     db.prepare(
-      `INSERT INTO documents (id, title, original_name, file_path, status, created_at)
-       VALUES (?, ?, ?, ?, 'draft', ?)`
-    ).run(id, title, req.file.originalname, req.file.path, nowIso());
+      `INSERT INTO documents (id, title, original_name, file_path, status, created_at, owner_id)
+       VALUES (?, ?, ?, ?, 'draft', ?, ?)`
+    ).run(id, title, req.file.originalname, req.file.path, nowIso(), req.user.id);
     logEvent(id, { type: 'document.created', detail: `${title} (${pageCount} pages)`, req });
     res.json({ id, pageCount });
   })
 );
 
-app.get('/api/documents', (_req, res) => {
-  const rows = q.docs.all().map((d) => {
+app.get('/api/documents', (req, res) => {
+  const rows = q.docs.all()
+    .filter((d) => !d.owner_id || d.owner_id === req.user.id)
+    .map((d) => {
     const recips = q.recips.all(d.id);
     return {
       ...d,
@@ -91,22 +151,21 @@ app.get('/api/documents', (_req, res) => {
 });
 
 app.get('/api/documents/:id', (req, res) => {
-  const payload = docPayload(req.params.id);
-  if (!payload) return res.status(404).json({ error: 'Not found' });
-  res.json(payload);
+  if (!ownedDoc(req, res)) return;
+  res.json(docPayload(req.params.id));
 });
 
 // Serve the original PDF bytes (authoring / preview).
 app.get('/api/documents/:id/file', (req, res) => {
-  const d = q.doc.get(req.params.id);
-  if (!d) return res.status(404).end();
+  const d = ownedDoc(req, res);
+  if (!d) return;
   res.type('application/pdf').sendFile(d.file_path);
 });
 
 // Save recipients + field placements. Only allowed while in draft.
 app.put('/api/documents/:id/prepare', (req, res) => {
-  const d = q.doc.get(req.params.id);
-  if (!d) return res.status(404).json({ error: 'Not found' });
+  const d = ownedDoc(req, res);
+  if (!d) return;
   if (d.status !== 'draft') return res.status(409).json({ error: 'Document already sent.' });
 
   const { recipients = [], fields = [] } = req.body;
@@ -146,10 +205,10 @@ app.put('/api/documents/:id/prepare', (req, res) => {
   res.json(docPayload(d.id));
 });
 
-// Send for signature: lock the document, hash it, mint links.
-app.post('/api/documents/:id/send', (req, res) => {
-  const d = q.doc.get(req.params.id);
-  if (!d) return res.status(404).json({ error: 'Not found' });
+// Send for signature: lock the document, hash it, mint links, email whoever's turn.
+app.post('/api/documents/:id/send', asyncH(async (req, res) => {
+  const d = ownedDoc(req, res);
+  if (!d) return;
   if (d.status !== 'draft') return res.status(409).json({ error: 'Already sent.' });
   const recips = q.recips.all(d.id);
   if (!recips.length) return res.status(400).json({ error: 'Nothing to send.' });
@@ -163,34 +222,72 @@ app.post('/api/documents/:id/send', (req, res) => {
   db.prepare(`UPDATE documents SET status='sent', sent_at=?, sha256_sent=? WHERE id=?`).run(nowIso(), hash, d.id);
   logEvent(d.id, { type: 'document.sent', detail: `sha256=${hash}`, req });
 
-  const base = `${req.protocol}://${req.get('host')}`;
-  const links = recips.map((r) => ({ name: r.name, email: r.email, url: `${base}/sign.html?t=${r.token}` }));
+  const links = recips.map((r) => ({ name: r.name, email: r.email, url: signUrl(req, r) }));
   console.log(`\n[InkWell] Document "${d.title}" sent. Signing links:`);
   links.forEach((l) => console.log(`  ${l.name} <${l.email}>: ${l.url}`));
-  res.json({ ok: true, links });
-});
+  await notifyPendingSigners(d, req);
+  res.json({ ok: true, links, emailMode });
+}));
 
 app.post('/api/documents/:id/void', (req, res) => {
-  const d = q.doc.get(req.params.id);
-  if (!d) return res.status(404).json({ error: 'Not found' });
+  const d = ownedDoc(req, res);
+  if (!d) return;
   db.prepare(`UPDATE documents SET status='voided' WHERE id=?`).run(d.id);
   logEvent(d.id, { type: 'document.voided', req });
   res.json({ ok: true });
 });
 
 app.get('/api/documents/:id/audit', (req, res) => {
-  const d = q.doc.get(req.params.id);
-  if (!d) return res.status(404).json({ error: 'Not found' });
-  res.json({ document: d, recipients: q.recips.all(d.id), events: getEvents(d.id) });
+  const d = ownedDoc(req, res);
+  if (!d) return;
+  res.json({ document: d, recipients: q.recips.all(d.id), events: getEvents(d.id), certInfo: getCertInfo() });
 });
 
 app.get('/api/documents/:id/final', (req, res) => {
-  const d = q.doc.get(req.params.id);
-  if (!d || !d.final_path) return res.status(404).json({ error: 'Not completed yet.' });
+  const d = ownedDoc(req, res);
+  if (!d) return;
+  if (!d.final_path) return res.status(404).json({ error: 'Not completed yet.' });
   res.type('application/pdf')
     .setHeader('Content-Disposition', `attachment; filename="${safeName(d.title)}-signed.pdf"`);
   res.sendFile(d.final_path);
 });
+
+// ---- notifications -------------------------------------------------------
+
+const signUrl = (req, r) => `${baseUrl(req)}/sign.html?t=${r.token}`;
+
+// Email every signer whose turn it is (order-unblocked) and who hasn't been
+// invited yet; records invited_at so nobody is emailed twice.
+async function notifyPendingSigners(document, req) {
+  const recips = q.recips.all(document.id);
+  for (const r of recips) {
+    if (r.status === 'signed' || r.invited_at || blockedByOrder(r)) continue;
+    try {
+      await sendInvitation({ recipient: r, document, url: signUrl(req, r) });
+      db.prepare('UPDATE recipients SET invited_at=? WHERE id=?').run(nowIso(), r.id);
+      logEvent(document.id, { recipientId: r.id, type: 'signer.invited', detail: r.email });
+    } catch (e) {
+      console.error('invite email failed for', r.email, e.message);
+    }
+  }
+}
+
+// When a document completes, notify all signers (and the owner) with a status link.
+async function onCompleted(document, recips, req) {
+  const owner = document.owner_id ? db.prepare('SELECT * FROM users WHERE id=?').get(document.owner_id) : null;
+  const statusUrl = `${baseUrl(req)}/status.html?id=${document.id}`;
+  const targets = [...recips.map((r) => ({ name: r.name, email: r.email }))];
+  if (owner && !targets.some((t) => t.email.toLowerCase() === owner.email)) {
+    targets.push({ name: owner.name || owner.email, email: owner.email });
+  }
+  for (const t of targets) {
+    try {
+      await sendCompletion({ recipient: t, document, url: statusUrl });
+    } catch (e) {
+      console.error('completion email failed for', t.email, e.message);
+    }
+  }
+}
 
 // ---- signer flow (token based) ------------------------------------------
 
@@ -285,17 +382,30 @@ app.post(
       req,
     });
 
-    // If everyone has signed, produce the final document.
+    // If everyone has signed, produce the final document and cryptographically seal it.
     const recips = q.recips.all(document.id);
     if (recips.every((r) => r.status === 'signed')) {
       const fields = q.fields.all(document.id);
-      const { bytes, sha256: finalHash } = await buildFinalPdf({ document, recipients: recips, fields });
+      const certInfo = getCertInfo();
+      const { bytes } = await buildFinalPdf({ document, recipients: recips, fields, certInfo });
+      const sealed = await sealPdf(bytes, { reason: `Completed via InkWell — ${document.title}` });
+      const finalHash = sha256(sealed);
       const finalPath = path.join(UPLOAD_DIR, `${document.id}-final.pdf`);
-      await fsp.writeFile(finalPath, bytes);
+      await fsp.writeFile(finalPath, sealed);
       db.prepare(`UPDATE documents SET status='completed', completed_at=?, sha256_final=?, final_path=? WHERE id=?`).run(
         nowIso(), finalHash, finalPath, document.id
       );
+      logEvent(document.id, {
+        type: 'document.sealed',
+        detail: `PKCS#7 seal · cert ${certInfo.fingerprintSha256}`,
+        req,
+      });
       logEvent(document.id, { type: 'document.completed', detail: `final sha256=${finalHash}`, req });
+      const completedDoc = q.doc.get(document.id);
+      onCompleted(completedDoc, recips, req).catch((e) => console.error('completion notify failed', e));
+    } else {
+      // Not done yet — invite whoever is now unblocked (next in signing order).
+      await notifyPendingSigners(document, req);
     }
     res.json({ ok: true });
   })

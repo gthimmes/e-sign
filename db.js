@@ -67,11 +67,35 @@ CREATE TABLE IF NOT EXISTS audit_events (
   created_at    TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS users (
+  id            TEXT PRIMARY KEY,
+  email         TEXT NOT NULL UNIQUE,
+  name          TEXT,
+  password_hash TEXT NOT NULL,
+  created_at    TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS sessions (
+  id            TEXT PRIMARY KEY,
+  user_id       TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at    TEXT NOT NULL,
+  expires_at    TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_recipients_doc  ON recipients(document_id);
 CREATE INDEX IF NOT EXISTS idx_fields_doc       ON fields(document_id);
 CREATE INDEX IF NOT EXISTS idx_fields_recipient ON fields(recipient_id);
 CREATE INDEX IF NOT EXISTS idx_audit_doc        ON audit_events(document_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_user    ON sessions(user_id);
 `);
+
+// Additive migrations for columns introduced after the first release.
+function addColumn(table, col, decl) {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all();
+  if (!cols.some((c) => c.name === col)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${decl}`);
+}
+addColumn('documents', 'owner_id', 'TEXT');
+addColumn('recipients', 'invited_at', 'TEXT');
 
 // node:sqlite's DatabaseSync has no .transaction() helper (unlike better-sqlite3),
 // so wrap BEGIN/COMMIT/ROLLBACK manually.
