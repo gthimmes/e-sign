@@ -22,9 +22,11 @@ async function load() {
     <h1>${esc(d.title)} <span class="pill ${d.status}">${d.status}</span></h1>
     <p class="sub">${esc(d.original_name)}</p>
 
-    <div style="display:flex; gap:10px; margin-bottom:20px">
+    <div style="display:flex; gap:10px; margin-bottom:20px; flex-wrap:wrap">
       ${d.status === 'completed' ? `<a class="btn primary" href="/api/documents/${d.id}/final">⬇ Download signed PDF</a>` : ''}
+      ${d.tsr_path ? `<a class="btn" href="/api/documents/${d.id}/timestamp">⬇ Timestamp token (.tsr)</a>` : ''}
       <a class="btn" href="/api/documents/${d.id}/file" target="_blank">View original</a>
+      ${d.status === 'sent' ? `<button class="btn" id="remindBtn">✉ Send reminder</button>` : ''}
       ${d.status === 'sent' ? `<button class="btn danger" id="voidBtn">Void document</button>` : ''}
     </div>
 
@@ -64,6 +66,12 @@ async function load() {
         <div>Fingerprint (SHA-256): <code>${esc(certInfo?.fingerprintSha256 || '—')}</code></div>
         <div>Valid: ${certInfo?.notBefore ? new Date(certInfo.notBefore).toLocaleDateString() : '—'} → ${certInfo?.notAfter ? new Date(certInfo.notAfter).toLocaleDateString() : '—'}</div>
       </div>
+      ${d.tsa_time ? `<h2 style="margin-top:18px">Trusted timestamp (RFC-3161)</h2>
+        <p class="muted" style="font-size:13px; margin-top:0">An independent Time-Stamping Authority attests the sealed document existed at this time. Verify with <code>openssl ts -verify</code>.</p>
+        <div class="linklist" style="font-size:12px">
+          <div>Asserted time: <strong>${new Date(d.tsa_time).toUTCString()}</strong></div>
+          <div>Authority: <code>${esc(d.tsa_url || '—')}</code></div>
+        </div>` : ''}
     </div>` : ''}`;
 
   const voidBtn = document.getElementById('voidBtn');
@@ -72,16 +80,34 @@ async function load() {
     await fetch(`/api/documents/${d.id}/void`, { method: 'POST' });
     load();
   };
+
+  const remindBtn = document.getElementById('remindBtn');
+  if (remindBtn) remindBtn.onclick = async () => {
+    remindBtn.disabled = true;
+    const res = await fetch(`/api/documents/${d.id}/remind`, { method: 'POST' });
+    const data = await res.json();
+    remindBtn.disabled = false;
+    if (!res.ok) return toast(data.error || 'Could not send reminder.');
+    toast(`Reminder sent to ${data.reminded.join(', ')}${data.emailMode === 'log-only' ? ' (logged)' : ''}.`);
+    load();
+  };
 }
 
 function recipRow(r) {
+  const pill = r.status === 'signed' ? 'completed' : r.status === 'declined' ? 'voided' : 'sent';
   return `<tr>
-    <td><strong>${esc(r.name)}</strong></td>
+    <td><strong>${esc(r.name)}</strong>${r.status === 'declined' && r.decline_reason ? `<div class="muted" style="font-size:12px">Reason: ${esc(r.decline_reason)}</div>` : ''}</td>
     <td class="muted">${esc(r.email)}</td>
-    <td><span class="pill ${r.status === 'signed' ? 'completed' : r.status === 'declined' ? 'voided' : 'sent'}">${r.status}</span></td>
+    <td><span class="pill ${pill}">${r.status}</span></td>
     <td class="muted">${r.signed_at ? new Date(r.signed_at).toLocaleString() : '—'}</td>
     <td class="muted">${r.ip || '—'}</td>
   </tr>`;
+}
+
+function toast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 2800);
 }
 
 function esc(s) { return String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }

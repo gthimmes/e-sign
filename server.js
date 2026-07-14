@@ -10,11 +10,12 @@ import db, { transaction } from './db.js';
 import { newId, newToken, nowIso, sha256, logEvent, clientIp, getEvents } from './lib/audit.js';
 import { buildFinalPdf } from './lib/pdfStamp.js';
 import { ensureSigningCert, getCertInfo, sealPdf } from './lib/pki.js';
+import { timestamp } from './lib/tsa.js';
 import {
   createUser, getUserByEmail, verifyPassword, createSession, destroySession,
   setSessionCookie, clearSessionCookie, loadUser, requireAuth,
 } from './lib/auth.js';
-import { sendInvitation, sendCompletion, emailMode } from './lib/email.js';
+import { sendInvitation, sendCompletion, sendDeclined, sendReminder, emailMode } from './lib/email.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const UPLOAD_DIR = path.join(__dirname, 'uploads');
@@ -237,6 +238,26 @@ app.post('/api/documents/:id/void', (req, res) => {
   res.json({ ok: true });
 });
 
+// Re-email the signer(s) whose turn it currently is.
+app.post('/api/documents/:id/remind', asyncH(async (req, res) => {
+  const d = ownedDoc(req, res);
+  if (!d) return;
+  if (d.status !== 'sent') return res.status(409).json({ error: 'Only sent documents can be reminded.' });
+  const pending = q.recips.all(d.id).filter((r) => r.status !== 'signed' && r.status !== 'declined' && !blockedByOrder(r));
+  if (!pending.length) return res.status(400).json({ error: 'No one is currently awaiting signature.' });
+  let sent = 0;
+  for (const r of pending) {
+    try {
+      await sendReminder({ recipient: r, document: d, url: signUrl(req, r) });
+      logEvent(d.id, { recipientId: r.id, type: 'signer.reminded', detail: r.email, req });
+      sent++;
+    } catch (e) {
+      console.error('reminder email failed for', r.email, e.message);
+    }
+  }
+  res.json({ ok: true, reminded: pending.map((r) => r.name), emailMode });
+}));
+
 app.get('/api/documents/:id/audit', (req, res) => {
   const d = ownedDoc(req, res);
   if (!d) return;
@@ -250,6 +271,16 @@ app.get('/api/documents/:id/final', (req, res) => {
   res.type('application/pdf')
     .setHeader('Content-Disposition', `attachment; filename="${safeName(d.title)}-signed.pdf"`);
   res.sendFile(d.final_path);
+});
+
+// Download the RFC-3161 timestamp token (verifiable with `openssl ts -verify`).
+app.get('/api/documents/:id/timestamp', (req, res) => {
+  const d = ownedDoc(req, res);
+  if (!d) return;
+  if (!d.tsr_path) return res.status(404).json({ error: 'No trusted timestamp for this document.' });
+  res.type('application/timestamp-reply')
+    .setHeader('Content-Disposition', `attachment; filename="${safeName(d.title)}.tsr"`);
+  res.sendFile(d.tsr_path);
 });
 
 // ---- notifications -------------------------------------------------------
@@ -324,6 +355,7 @@ app.get('/api/sign/:token', (req, res) => {
     fields: q.fieldsForRecip.all(recipient.id),
     waitingForOthers: blockedByOrder(recipient),
     alreadyComplete: document.status === 'completed' || recipient.status === 'signed',
+    declined: recipient.status === 'declined' || document.status === 'voided',
   });
 });
 
@@ -348,6 +380,43 @@ app.post('/api/sign/:token/consent', (req, res) => {
   });
   res.json({ ok: true });
 });
+
+// Decline to sign: records the reason, voids the document, notifies everyone.
+app.post('/api/sign/:token/decline', asyncH(async (req, res) => {
+  const v = signerView(req.params.token);
+  if (!v) return res.status(404).json({ error: 'Invalid link.' });
+  const { recipient, document } = v;
+  if (recipient.status === 'signed') return res.status(409).json({ error: 'You have already signed.' });
+  if (document.status === 'completed') return res.status(409).json({ error: 'This document is already complete.' });
+  const reason = String(req.body?.reason || '').slice(0, 500).trim();
+
+  db.prepare(`UPDATE recipients SET status='declined', decline_reason=?, ip=?, user_agent=? WHERE id=?`).run(
+    reason || null, clientIp(req), req.get('user-agent') || null, recipient.id
+  );
+  db.prepare(`UPDATE documents SET status='voided' WHERE id=?`).run(document.id);
+  logEvent(document.id, {
+    recipientId: recipient.id,
+    type: 'signer.declined',
+    detail: reason ? `${recipient.name}: ${reason}` : `${recipient.name} declined`,
+    req,
+  });
+
+  // Notify the owner and the other signers that it was declined + voided.
+  const statusUrl = `${baseUrl(req)}/status.html?id=${document.id}`;
+  const owner = document.owner_id ? db.prepare('SELECT * FROM users WHERE id=?').get(document.owner_id) : null;
+  const targets = q.recips.all(document.id)
+    .filter((r) => r.id !== recipient.id)
+    .map((r) => ({ name: r.name, email: r.email, url: statusUrl }));
+  if (owner) targets.push({ name: owner.name || owner.email, email: owner.email, url: statusUrl });
+  for (const t of targets) {
+    try {
+      await sendDeclined({ to: t.email, name: t.name, document, declinedBy: recipient.name, reason, url: t.url });
+    } catch (e) {
+      console.error('decline email failed for', t.email, e.message);
+    }
+  }
+  res.json({ ok: true });
+}));
 
 app.post(
   '/api/sign/:token/complete',
@@ -400,6 +469,27 @@ app.post(
         detail: `PKCS#7 seal · cert ${certInfo.fingerprintSha256}`,
         req,
       });
+
+      // Best-effort RFC-3161 trusted timestamp over the sealed bytes.
+      const ts = await timestamp(sealed);
+      if (ts) {
+        const tsrPath = path.join(UPLOAD_DIR, `${document.id}.tsr`);
+        await fsp.writeFile(tsrPath, ts.tokenDer);
+        db.prepare(`UPDATE documents SET tsa_time=?, tsa_url=?, tsr_path=? WHERE id=?`).run(
+          ts.genTime, ts.tsaUrl, tsrPath, document.id
+        );
+        logEvent(document.id, {
+          type: 'document.timestamped',
+          detail: `RFC-3161 trusted time ${ts.genTime} via ${ts.tsaUrl}`,
+          req,
+        });
+      } else {
+        logEvent(document.id, {
+          type: 'document.timestamp_skipped',
+          detail: 'TSA unreachable — sealed with server clock only',
+          req,
+        });
+      }
       logEvent(document.id, { type: 'document.completed', detail: `final sha256=${finalHash}`, req });
       const completedDoc = q.doc.get(document.id);
       onCompleted(completedDoc, recips, req).catch((e) => console.error('completion notify failed', e));

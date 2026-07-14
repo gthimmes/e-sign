@@ -96,6 +96,9 @@ function addColumn(table, col, decl) {
 }
 addColumn('documents', 'owner_id', 'TEXT');
 addColumn('recipients', 'invited_at', 'TEXT');
+addColumn('documents', 'tsa_time', 'TEXT');       // TSA-asserted genTime (RFC-3161)
+addColumn('documents', 'tsa_url', 'TEXT');
+addColumn('documents', 'tsr_path', 'TEXT');       // stored timestamp token (.tsr)
 
 // node:sqlite's DatabaseSync has no .transaction() helper (unlike better-sqlite3),
 // so wrap BEGIN/COMMIT/ROLLBACK manually.

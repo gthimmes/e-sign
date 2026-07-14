@@ -35,11 +35,14 @@ authoring actions require signing in. Signer links stay public and token-based.
    it is (respecting signing order). Links are also shown on screen / logged.
 5. **Sign** — each signer opens their link, is shown an ESIGN/UETA consent
    disclosure they must accept, then fills their fields. Signatures can be drawn or
-   typed. Signing order is enforced; the next signer is emailed automatically.
+   typed. Signing order is enforced; the next signer is emailed automatically. A
+   signer who can't proceed may **decline with a reason**, which voids the document
+   and notifies everyone. The sender can **send reminders** to whoever's turn it is.
 6. **Complete** — once everyone signs, InkWell stamps the signatures into the PDF,
    appends a **Certificate of Completion** (the full audit trail), applies a
-   **cryptographic PKCS#7 seal** over the whole document, and emails all parties.
-   The sealed PDF is available for download.
+   **cryptographic PKCS#7 seal** over the whole document, obtains an **RFC-3161
+   trusted timestamp** from a Time-Stamping Authority, and emails all parties. The
+   sealed PDF and the timestamp token are available for download.
 
 ## Configuration (environment variables)
 
@@ -51,6 +54,7 @@ All optional — sensible local defaults are used if unset.
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_SECURE` | Real email delivery. With no `SMTP_HOST`, emails are **logged to the console only** and never sent — safe for local dev. |
 | `MAIL_FROM` | From address for outgoing mail |
 | `SEAL_PASSPHRASE`, `SEAL_CN`, `SEAL_ORG`, `SEAL_COUNTRY` | Signing-certificate passphrase and subject |
+| `TSA_URL` | RFC-3161 Time-Stamping Authority endpoint (default `https://freetsa.org/tsr`). Timestamping is best-effort — if the TSA is unreachable, completion still succeeds and the audit trail records that it was skipped. |
 | `COOKIE_SECURE` | Set `true` behind HTTPS so the session cookie is secure-only |
 
 ## What makes the signatures "legit"
@@ -60,9 +64,9 @@ All optional — sensible local defaults are used if unset.
 | Intent to sign | Explicit draw/type + "Finish & submit" confirmation |
 | Consent to e-records | Mandatory ESIGN/UETA disclosure + checkbox before signing |
 | Attribution | Unique per-signer email + unguessable token; IP, user-agent, timestamps captured |
-| Integrity / tamper-evidence | SHA-256 at send + at completion, **plus a PKCS#7 digital seal** over the finished PDF (verifiable in Adobe Reader) |
-| Audit trail | Every action logged (created, sent, invited, viewed, consented, signed, sealed, completed) |
-| Retention | Original + sealed PDF + audit stored and downloadable; certificate embedded in the final PDF |
+| Integrity / tamper-evidence | SHA-256 at send + at completion, a **PKCS#7 digital seal** over the finished PDF (verifiable in Adobe Reader), **plus an RFC-3161 trusted timestamp** proving when it existed |
+| Audit trail | Every action logged (created, sent, invited, reminded, viewed, consented, signed, declined, sealed, timestamped, completed) |
+| Retention | Original + sealed PDF + timestamp token + audit stored and downloadable; certificate embedded in the final PDF |
 
 ## Architecture
 
@@ -72,6 +76,7 @@ db.js             node:sqlite schema + transaction helper + migrations
 lib/audit.js      hashing, tokens, audit-event logging
 lib/pdfStamp.js   stamps fields + appends the Certificate of Completion (pdf-lib)
 lib/pki.js        self-signed signing cert + PKCS#7 sealing (@signpdf, node-forge)
+lib/tsa.js        RFC-3161 trusted timestamping (node-forge ASN.1)
 lib/auth.js       scrypt passwords + server-side sessions (httpOnly cookie)
 lib/email.js      nodemailer transport (SMTP or console-log fallback)
 public/           login, dashboard, prepare editor, signer view, status page
@@ -96,14 +101,31 @@ Reader shows "signer identity unknown" until you trust the cert — expected for
 locally-generated authority. The certificate's SHA-256 fingerprint is printed on the
 Certificate of Completion and the document status page.
 
+## Trusted timestamp (RFC-3161)
+
+After sealing, InkWell sends the SHA-256 of the sealed PDF to a Time-Stamping
+Authority and receives a signed **timestamp token** asserting the document existed at
+a given time — independent of our own server clock. The token's message imprint is
+verified against our hash, the TSA-asserted time is recorded in the audit trail, and
+the token is downloadable as a `.tsr` from the status page. You can verify it
+independently:
+
+```bash
+openssl ts -reply -token_in -in <document>.tsr -text   # inspect
+```
+
+This detached token proves *when*; it complements the PKCS#7 seal that proves
+*integrity*.
+
 ## Honest limitations (this is still a basic app)
 
 - **Stronger identity verification** — email + link proves control of an inbox, not
   legal identity. Add SMS/OTP, knowledge-based auth, or ID verification for
   high-value agreements.
-- **Trusted timestamping** — the seal uses the server's clock; a production system
-  would add an RFC-3161 TSA timestamp and long-term validation (LTV) so signatures
-  remain verifiable after the certificate expires.
+- **Embedded PAdES timestamp / LTV** — the RFC-3161 token is stored as a detached
+  companion artifact rather than embedded inside the PDF's CMS signature as a PAdES
+  document-timestamp. Embedding it (plus long-term validation material) would let
+  Adobe Reader show the timestamp natively.
 - **Publicly-trusted signing certificate** — swap the self-signed cert for one from
   a CA in Adobe's Approved Trust List (AATL) to get a green check in Reader.
 - **Password reset & email verification** flows for sender accounts.

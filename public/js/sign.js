@@ -21,8 +21,8 @@ async function init() {
     showMessage('ok', '✓ You have already signed this document. Thank you — no further action is needed.');
     return;
   }
-  if (state.document.status === 'voided') {
-    showMessage('warn', 'This document has been voided by the sender.');
+  if (state.declined || state.document.status === 'voided') {
+    showMessage('warn', 'This document has been voided and is no longer available for signing.');
     return;
   }
   if (state.waitingForOthers) {
@@ -52,11 +52,33 @@ function openConsent() {
 
 async function startSigning() {
   el('viewer').style.display = '';
-  showMessage('info', 'Click each highlighted field to complete it, then choose <strong>Finish &amp; submit</strong>.');
+  el('declineBtn').style.display = '';
+  showMessage('info', 'Click each highlighted field to complete it, then choose <strong>Finish &amp; submit</strong>. If you can’t sign, you may <strong>Decline</strong>.');
   pagesInfo = await renderPdf(`/api/sign/${token}/file`, el('viewer'));
   drawFields();
   updateProgress();
   el('finishBtn').onclick = finish;
+  wireDecline();
+}
+
+function wireDecline() {
+  el('declineBtn').onclick = () => el('declineModal').classList.add('show');
+  el('declineCancel').onclick = () => el('declineModal').classList.remove('show');
+  el('declineConfirm').onclick = async () => {
+    el('declineConfirm').disabled = true;
+    const reason = el('declineReason').value.trim();
+    const res = await fetch(`/api/sign/${token}/decline`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reason }),
+    });
+    const data = await res.json();
+    if (!res.ok) { toast(data.error || 'Could not decline.'); el('declineConfirm').disabled = false; return; }
+    el('declineModal').classList.remove('show');
+    el('viewer').style.display = 'none';
+    el('declineBtn').style.display = 'none';
+    el('finishBtn').style.display = 'none';
+    el('progress').textContent = '';
+    showMessage('warn', 'You have declined to sign this document. The sender has been notified and the document is now voided.');
+  };
 }
 
 function drawFields() {

@@ -12,6 +12,7 @@
     <span class="muted" id="docTitle"></span>
     <div class="spacer"></div>
     <span class="muted" id="progress"></span>
+    <button class="btn ghost" id="declineBtn" style="display:none">Decline</button>
     <button class="btn primary" id="finishBtn" disabled>Finish &amp; submit</button>
   </div>
 
@@ -45,6 +46,22 @@
       <div class="foot">
         <button class="btn ghost" onclick="location.href='/'">Decline</button>
         <button class="btn primary" id="consentBtn" disabled>Agree &amp; continue</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Decline modal -->
+  <div class="modal-bg" id="declineModal">
+    <div class="modal">
+      <div class="body">
+        <h2>Decline to sign</h2>
+        <p class="muted" style="margin-top:0">If you decline, this document will be voided and the sender notified. This cannot be undone.</p>
+        <label class="fld">Reason (optional)</label>
+        <input type="text" id="declineReason" placeholder="e.g. Terms need revision" maxlength="500" />
+      </div>
+      <div class="foot">
+        <button class="btn ghost" id="declineCancel">Cancel</button>
+        <button class="btn danger" id="declineConfirm">Decline &amp; void</button>
       </div>
     </div>
   </div>
