@@ -73,4 +73,18 @@ CREATE INDEX IF NOT EXISTS idx_fields_recipient ON fields(recipient_id);
 CREATE INDEX IF NOT EXISTS idx_audit_doc        ON audit_events(document_id);
 `);
 
+// node:sqlite's DatabaseSync has no .transaction() helper (unlike better-sqlite3),
+// so wrap BEGIN/COMMIT/ROLLBACK manually.
+export function transaction(fn) {
+  db.exec('BEGIN');
+  try {
+    const result = fn();
+    db.exec('COMMIT');
+    return result;
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
+}
+
 export default db;

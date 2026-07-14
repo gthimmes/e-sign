@@ -6,7 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PDFDocument } from 'pdf-lib';
 
-import db from './db.js';
+import db, { transaction } from './db.js';
 import { newId, newToken, nowIso, sha256, logEvent, clientIp, getEvents } from './lib/audit.js';
 import { buildFinalPdf } from './lib/pdfStamp.js';
 
@@ -112,7 +112,7 @@ app.put('/api/documents/:id/prepare', (req, res) => {
   const { recipients = [], fields = [] } = req.body;
   if (!recipients.length) return res.status(400).json({ error: 'Add at least one recipient.' });
 
-  const tx = db.transaction(() => {
+  transaction(() => {
     db.prepare('DELETE FROM fields WHERE document_id = ?').run(d.id);
     db.prepare('DELETE FROM recipients WHERE document_id = ?').run(d.id);
 
@@ -142,7 +142,6 @@ app.put('/api/documents/:id/prepare', (req, res) => {
       );
     }
   });
-  tx();
   logEvent(d.id, { type: 'document.prepared', detail: `${recipients.length} recipient(s), ${fields.length} field(s)`, req });
   res.json(docPayload(d.id));
 });
@@ -273,13 +272,12 @@ app.post(
       }
     }
     const setVal = db.prepare('UPDATE fields SET value=? WHERE id=?');
-    const tx = db.transaction(() => {
+    transaction(() => {
       for (const f of myFields) if (values[f.id] != null) setVal.run(String(values[f.id]), f.id);
       db.prepare(`UPDATE recipients SET status='signed', signed_at=?, ip=?, user_agent=? WHERE id=?`).run(
         nowIso(), clientIp(req), req.get('user-agent') || null, recipient.id
       );
     });
-    tx();
     logEvent(document.id, {
       recipientId: recipient.id,
       type: 'signer.signed',
