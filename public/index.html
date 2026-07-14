@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>InkWell — e-signatures</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div class="topbar">
+    <div class="brand"><span class="dot">✒</span> InkWell</div>
+    <div class="spacer"></div>
+    <button class="btn primary" id="newBtn">＋ New document</button>
+  </div>
+
+  <div class="wrap">
+    <h1>Documents</h1>
+    <p class="sub">Upload a PDF, mark where signatures go, and send it out for legally-binding e-signatures.</p>
+
+    <div class="card" id="uploadCard" style="display:none; margin-bottom:20px">
+      <div class="pad">
+        <h2>Upload a PDF</h2>
+        <div class="drop" id="drop">
+          <strong>Click to choose</strong> or drop a PDF here
+          <input type="file" id="file" accept="application/pdf" hidden />
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <table>
+        <thead>
+          <tr><th>Document</th><th>Status</th><th>Signers</th><th>Created</th><th></th></tr>
+        </thead>
+        <tbody id="rows"><tr><td colspan="5" class="empty">Loading…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+  <script type="module" src="/js/dashboard.js"></script>
+</body>
+</html>
