@@ -1,0 +1,148 @@
+import { renderPdf } from '/js/pdfview.js';
+import { openSignaturePad } from '/js/sigpad.js';
+
+const token = new URLSearchParams(location.search).get('t');
+const el = (id) => document.getElementById(id);
+
+let state = null;         // response from /api/sign/:token
+let pagesInfo = [];
+const values = {};        // fieldId -> value
+
+init();
+
+async function init() {
+  const res = await fetch(`/api/sign/${token}`);
+  if (!res.ok) { showMessage('warn', 'This signing link is invalid or has expired.'); return; }
+  state = await res.json();
+  el('docTitle').textContent = state.document.title;
+  el('cTitle').textContent = state.document.title;
+
+  if (state.alreadyComplete) {
+    showMessage('ok', '✓ You have already signed this document. Thank you — no further action is needed.');
+    return;
+  }
+  if (state.document.status === 'voided') {
+    showMessage('warn', 'This document has been voided by the sender.');
+    return;
+  }
+  if (state.waitingForOthers) {
+    showMessage('info', 'It is not your turn yet — this document is waiting on an earlier signer. You will be able to sign once they finish.');
+    return;
+  }
+
+  if (state.recipient.consented) startSigning();
+  else openConsent();
+}
+
+// ---- consent -------------------------------------------------------------
+
+function openConsent() {
+  el('consentModal').classList.add('show');
+  el('consentCheck').onchange = (e) => { el('consentBtn').disabled = !e.target.checked; };
+  el('consentBtn').onclick = async () => {
+    el('consentBtn').disabled = true;
+    const res = await fetch(`/api/sign/${token}/consent`, { method: 'POST' });
+    if (!res.ok) { toast('Could not record consent.'); el('consentBtn').disabled = false; return; }
+    el('consentModal').classList.remove('show');
+    startSigning();
+  };
+}
+
+// ---- signing -------------------------------------------------------------
+
+async function startSigning() {
+  el('viewer').style.display = '';
+  showMessage('info', 'Click each highlighted field to complete it, then choose <strong>Finish &amp; submit</strong>.');
+  pagesInfo = await renderPdf(`/api/sign/${token}/file`, el('viewer'));
+  drawFields();
+  updateProgress();
+  el('finishBtn').onclick = finish;
+}
+
+function drawFields() {
+  pagesInfo.forEach((p) => (p.overlay.innerHTML = ''));
+  for (const f of state.fields) {
+    const p = pagesInfo.find((x) => x.page === f.page);
+    if (!p) continue;
+    const box = document.createElement('div');
+    box.className = 'fill-field' + (f.required ? ' required' : '');
+    box.style.left = f.x_ratio * p.width + 'px';
+    box.style.top = f.y_ratio * p.height + 'px';
+    box.style.width = f.w_ratio * p.width + 'px';
+    box.style.height = f.h_ratio * p.height + 'px';
+    box.dataset.field = f.id;
+    renderFieldContent(box, f);
+    box.onclick = () => fillField(f, box);
+    p.overlay.appendChild(box);
+  }
+}
+
+function renderFieldContent(box, f) {
+  const v = values[f.id];
+  if (v == null || v === '') {
+    box.classList.remove('done');
+    box.innerHTML = `<span>${placeholder(f.type)}</span>`;
+  } else {
+    box.classList.add('done');
+    if (v.startsWith && v.startsWith('data:image')) box.innerHTML = `<img src="${v}" alt="signature"/>`;
+    else box.innerHTML = `<span class="val">${esc(v)}</span>`;
+  }
+}
+
+function placeholder(type) {
+  return { signature: 'Sign', initials: 'Initials', date: 'Date', name: 'Name', text: 'Text' }[type] || 'Fill';
+}
+
+async function fillField(f, box) {
+  if (f.type === 'signature' || f.type === 'initials') {
+    const png = await openSignaturePad({
+      title: f.type === 'initials' ? 'Adopt your initials' : 'Adopt your signature',
+      name: f.type === 'initials' ? initialsOf(state.recipient.name) : state.recipient.name,
+      initials: f.type === 'initials',
+    });
+    if (png) values[f.id] = png;
+  } else if (f.type === 'date') {
+    values[f.id] = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+  } else if (f.type === 'name') {
+    values[f.id] = state.recipient.name;
+  } else if (f.type === 'text') {
+    const t = prompt('Enter text:', values[f.id] || '');
+    if (t != null) values[f.id] = t;
+  }
+  renderFieldContent(box, f);
+  updateProgress();
+}
+
+function updateProgress() {
+  const required = state.fields.filter((f) => f.required);
+  const done = required.filter((f) => values[f.id] != null && values[f.id] !== '').length;
+  el('progress').textContent = `${done}/${required.length} required fields`;
+  el('finishBtn').disabled = done < required.length;
+}
+
+async function finish() {
+  el('finishBtn').disabled = true;
+  const res = await fetch(`/api/sign/${token}/complete`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ values }),
+  });
+  const data = await res.json();
+  if (!res.ok) { toast(data.error || 'Could not submit.'); el('finishBtn').disabled = false; return; }
+  el('viewer').style.display = 'none';
+  el('progress').textContent = '';
+  el('finishBtn').style.display = 'none';
+  showMessage('ok', '✓ Signed successfully. Thank you! A completed copy with the audit certificate will be available once all signers have finished.');
+}
+
+// ---- utils ---------------------------------------------------------------
+
+function initialsOf(name) {
+  return (name || '').split(/\s+/).filter(Boolean).map((s) => s[0].toUpperCase()).join('');
+}
+function showMessage(kind, html) {
+  el('message').innerHTML = `<div class="banner ${kind}">${html}</div>`;
+}
+function esc(s) { return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+function toast(msg) {
+  const t = el('toast'); t.textContent = msg; t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 2600);
+}

@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Prepare — InkWell</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div class="topbar">
+    <div class="brand"><span class="dot">✒</span> InkWell</div>
+    <span class="muted" id="docTitle"></span>
+    <div class="spacer"></div>
+    <a class="btn ghost" href="/">Cancel</a>
+    <button class="btn" id="saveBtn">Save draft</button>
+    <button class="btn primary" id="sendBtn">Send for signature →</button>
+  </div>
+
+  <div class="wrap wide">
+    <div class="banner info">
+      <strong>1.</strong> Add each signer &nbsp; <strong>2.</strong> Pick a field type, then click on the page to place it for the selected signer &nbsp; <strong>3.</strong> Send.
+    </div>
+    <div class="grid-2">
+      <div>
+        <div class="card pad">
+          <h2>Signers</h2>
+          <div id="recipients"></div>
+          <button class="btn sm" id="addRecipient">＋ Add signer</button>
+        </div>
+
+        <div class="card pad" style="margin-top:16px">
+          <h2>Fields <span class="muted" style="font-weight:400">for selected signer</span></h2>
+          <div class="tools" id="tools"></div>
+          <p class="muted" id="armedHint" style="margin:12px 0 0; font-size:12px">Select a field above, then click on the document.</p>
+        </div>
+      </div>
+
+      <div class="viewer" id="viewer"><div class="empty">Loading document…</div></div>
+    </div>
+  </div>
+
+  <!-- Send confirmation -->
+  <div class="modal-bg" id="sendModal">
+    <div class="modal">
+      <div class="body">
+        <h2>Send for signature</h2>
+        <p class="muted">Signing links will be generated for each signer. In this local app the links are shown here (and printed to the server console) instead of emailed.</p>
+        <div id="sendResult"></div>
+      </div>
+      <div class="foot">
+        <button class="btn ghost" data-close>Close</button>
+        <button class="btn primary" id="confirmSend">Send now</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+  <script type="module" src="/js/prepare.js"></script>
+</body>
+</html>

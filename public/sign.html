@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Review & sign — InkWell</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div class="topbar">
+    <div class="brand"><span class="dot">✒</span> InkWell</div>
+    <span class="muted" id="docTitle"></span>
+    <div class="spacer"></div>
+    <span class="muted" id="progress"></span>
+    <button class="btn primary" id="finishBtn" disabled>Finish &amp; submit</button>
+  </div>
+
+  <div class="wrap wide">
+    <div id="message"></div>
+    <div class="viewer" id="viewer" style="display:none"><div class="empty">Loading document…</div></div>
+  </div>
+
+  <!-- ESIGN consent gate -->
+  <div class="modal-bg" id="consentModal">
+    <div class="modal">
+      <div class="body">
+        <h2>Please review before signing</h2>
+        <p class="muted" style="margin-top:0">You are about to sign <strong id="cTitle"></strong> electronically.</p>
+        <div style="max-height:260px; overflow:auto; border:1px solid var(--line); border-radius:8px; padding:14px; font-size:13px; line-height:1.55">
+          <p><strong>Consent to use electronic records and signatures</strong></p>
+          <p>By checking the box below, you agree that:</p>
+          <ul>
+            <li>You consent to conduct this transaction electronically and to receive all related records in electronic form, as permitted under the U.S. ESIGN Act and the Uniform Electronic Transactions Act (UETA).</li>
+            <li>Your electronic signature applied in this session is the legal equivalent of your handwritten signature and is made with the intent to sign and be bound by this document.</li>
+            <li>You are able to access and retain this document in PDF form.</li>
+            <li>You may withdraw consent before signing by closing this window; doing so means the document will not be signed.</li>
+          </ul>
+          <p>A record of your name, email, IP address, and the date and time of each action will be kept as part of the signing audit trail.</p>
+        </div>
+        <label style="display:flex; gap:10px; align-items:flex-start; margin-top:14px; cursor:pointer">
+          <input type="checkbox" id="consentCheck" style="margin-top:3px" />
+          <span>I have read and agree to the above, and I consent to use electronic records and signatures.</span>
+        </label>
+      </div>
+      <div class="foot">
+        <button class="btn ghost" onclick="location.href='/'">Decline</button>
+        <button class="btn primary" id="consentBtn" disabled>Agree &amp; continue</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+  <script type="module" src="/js/sign.js"></script>
+</body>
+</html>
