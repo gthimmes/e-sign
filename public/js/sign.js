@@ -101,6 +101,12 @@ function drawFields() {
 
 function renderFieldContent(box, f) {
   const v = values[f.id];
+  if (f.type === 'checkbox') {
+    // Checkbox is always "rendered"; value 'true' shows a check, else an empty box.
+    box.classList.toggle('done', v === 'true');
+    box.innerHTML = `<span class="check">${v === 'true' ? '✓' : ''}</span>`;
+    return;
+  }
   if (v == null || v === '') {
     box.classList.remove('done');
     box.innerHTML = `<span>${placeholder(f.type)}</span>`;
@@ -130,6 +136,8 @@ async function fillField(f, box) {
   } else if (f.type === 'text') {
     const t = prompt('Enter text:', values[f.id] || '');
     if (t != null) values[f.id] = t;
+  } else if (f.type === 'checkbox') {
+    values[f.id] = values[f.id] === 'true' ? '' : 'true'; // toggle
   }
   renderFieldContent(box, f);
   updateProgress();

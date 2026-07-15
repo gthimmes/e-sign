@@ -16,6 +16,7 @@ import {
   setSessionCookie, clearSessionCookie, loadUser, requireAuth,
 } from './lib/auth.js';
 import { sendInvitation, sendCompletion, sendDeclined, sendReminder, emailMode } from './lib/email.js';
+import { rateLimit } from './lib/ratelimit.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const UPLOAD_DIR = path.join(__dirname, 'uploads');
@@ -75,11 +76,16 @@ function ownedDoc(req, res) {
 
 // ---- auth ----------------------------------------------------------------
 
+// Throttle credential endpoints per IP to blunt brute-force / enumeration.
+const authLimiter = rateLimit({ max: 10, windowMs: 5 * 60_000, message: 'Too many attempts. Please wait a few minutes and try again.' });
+// Throttle signer-token endpoints (guessing tokens / hammering submit).
+const signLimiter = rateLimit({ max: 60, windowMs: 60_000 });
+
 app.get('/api/auth/me', (req, res) => {
   res.json({ user: req.user ? { id: req.user.id, email: req.user.email, name: req.user.name } : null, emailMode });
 });
 
-app.post('/api/auth/register', (req, res) => {
+app.post('/api/auth/register', authLimiter, (req, res) => {
   const { email, name, password } = req.body || {};
   if (!email || !EMAIL_RE.test(email)) return res.status(400).json({ error: 'A valid email is required.' });
   if (!password || password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters.' });
@@ -90,7 +96,7 @@ app.post('/api/auth/register', (req, res) => {
   res.json({ user: { id: user.id, email: user.email, name: user.name } });
 });
 
-app.post('/api/auth/login', (req, res) => {
+app.post('/api/auth/login', authLimiter, (req, res) => {
   const { email, password } = req.body || {};
   const user = getUserByEmail(email || '');
   if (!user || !verifyPassword(password || '', user.password_hash)) {
@@ -264,6 +270,37 @@ app.get('/api/documents/:id/audit', (req, res) => {
   res.json({ document: d, recipients: q.recips.all(d.id), events: getEvents(d.id), certInfo: getCertInfo() });
 });
 
+// Full audit record as a downloadable JSON file (compliance/legal handoff).
+app.get('/api/documents/:id/audit.json', (req, res) => {
+  const d = ownedDoc(req, res);
+  if (!d) return;
+  const payload = {
+    exportedAt: nowIso(),
+    document: d,
+    signingCertificate: getCertInfo(),
+    recipients: q.recips.all(d.id),
+    fields: q.fields.all(d.id).map(({ value, ...f }) => f), // omit raw signature images
+    events: getEvents(d.id),
+  };
+  res.type('application/json')
+    .setHeader('Content-Disposition', `attachment; filename="${safeName(d.title)}-audit.json"`)
+    .send(JSON.stringify(payload, null, 2));
+});
+
+// Event log as CSV.
+app.get('/api/documents/:id/audit.csv', (req, res) => {
+  const d = ownedDoc(req, res);
+  if (!d) return;
+  const rows = [['timestamp', 'event', 'detail', 'recipient_id', 'ip', 'user_agent']];
+  for (const e of getEvents(d.id)) {
+    rows.push([e.created_at, e.event_type, e.detail || '', e.recipient_id || '', e.ip || '', e.user_agent || '']);
+  }
+  const csv = rows.map((r) => r.map(csvCell).join(',')).join('\r\n');
+  res.type('text/csv')
+    .setHeader('Content-Disposition', `attachment; filename="${safeName(d.title)}-audit.csv"`)
+    .send(csv);
+});
+
 app.get('/api/documents/:id/final', (req, res) => {
   const d = ownedDoc(req, res);
   if (!d) return;
@@ -321,6 +358,9 @@ async function onCompleted(document, recips, req) {
 }
 
 // ---- signer flow (token based) ------------------------------------------
+
+// Throttle all token-based signer endpoints per IP.
+app.use('/api/sign', signLimiter);
 
 function signerView(token) {
   const r = q.recipByToken.get(token);
@@ -510,6 +550,11 @@ function clamp(n) {
 }
 function safeName(s) {
   return String(s).replace(/[^a-z0-9._-]+/gi, '_').slice(0, 60) || 'document';
+}
+// Quote a CSV cell if it contains a comma, quote, or newline (RFC 4180).
+function csvCell(v) {
+  const s = String(v ?? '');
+  return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
 app.use((err, _req, res, _next) => {

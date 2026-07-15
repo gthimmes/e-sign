@@ -115,6 +115,7 @@ input:focus { outline: 2px solid #c7d2fe; border-color: var(--brand); }
 .fill-field.done { border-style: solid; background: rgba(22,163,74,.08); border-color: var(--ok); color: var(--ok); cursor: default; }
 .fill-field img { max-width: 100%; max-height: 100%; }
 .fill-field .val { padding: 2px 4px; color: var(--ink); font-weight: 500; }
+.fill-field .check { font-size: 18px; font-weight: 800; line-height: 1; }
 .fill-field.required::after { content: "★"; position: absolute; top: -8px; left: -6px; color: var(--danger); font-size: 12px; }
 
 /* modal */

@@ -43,7 +43,11 @@ async function load() {
       <div class="linklist">${links}</div></div>` : ''}
 
     <div class="card pad">
-      <h2>Audit trail</h2>
+      <div style="display:flex; align-items:center; gap:10px; margin-bottom:12px">
+        <h2 style="margin:0; flex:1">Audit trail</h2>
+        <a class="btn sm" href="/api/documents/${d.id}/audit.json">Export JSON</a>
+        <a class="btn sm" href="/api/documents/${d.id}/audit.csv">Export CSV</a>
+      </div>
       <div class="linklist" style="font-size:12px">
         ${events.map((e) => `<div>
           <span class="muted">${new Date(e.created_at).toLocaleString()}</span> &nbsp;

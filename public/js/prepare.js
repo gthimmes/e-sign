@@ -11,6 +11,7 @@ const FIELD_TYPES = [
   { type: 'date', label: 'Date signed', w: 130, h: 30 },
   { type: 'name', label: 'Full name', w: 165, h: 30 },
   { type: 'text', label: 'Text', w: 165, h: 30 },
+  { type: 'checkbox', label: 'Checkbox', w: 26, h: 26 },
 ];
 
 let recipients = [];      // { key, name, email, color }

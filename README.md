@@ -28,8 +28,8 @@ authoring actions require signing in. Signer links stay public and token-based.
 1. **Sign in** (or create an account) to reach your dashboard.
 2. **Upload** a PDF.
 3. **Prepare** — add each signer (name + email) and click to drop fields
-   (signature, initials, date, full name, text) onto the pages. Fields are
-   color-coded per signer and can be dragged/resized.
+   (signature, initials, date, full name, text, checkbox) onto the pages. Fields
+   are color-coded per signer and can be dragged/resized.
 4. **Send** — the document is locked, hashed (SHA-256), a unique tokenized signing
    link is minted per signer, and an **email invitation** is sent to whoever's turn
    it is (respecting signing order). Links are also shown on screen / logged.
@@ -67,6 +67,11 @@ All optional — sensible local defaults are used if unset.
 | Integrity / tamper-evidence | SHA-256 at send + at completion, a **PKCS#7 digital seal** over the finished PDF (verifiable in Adobe Reader), **plus an RFC-3161 trusted timestamp** proving when it existed |
 | Audit trail | Every action logged (created, sent, invited, reminded, viewed, consented, signed, declined, sealed, timestamped, completed) |
 | Retention | Original + sealed PDF + timestamp token + audit stored and downloadable; certificate embedded in the final PDF |
+| Exportable evidence | Full audit record downloadable as JSON or CSV from the status page (signature images omitted from JSON for privacy) |
+
+**Hardening in place:** credential endpoints (login/register) and signer-token
+endpoints are rate-limited per IP (in-memory sliding window) to blunt brute-force and
+token-guessing. Sessions are httpOnly cookies; passwords are scrypt-hashed.
 
 ## Architecture
 
@@ -79,6 +84,7 @@ lib/pki.js        self-signed signing cert + PKCS#7 sealing (@signpdf, node-forg
 lib/tsa.js        RFC-3161 trusted timestamping (node-forge ASN.1)
 lib/auth.js       scrypt passwords + server-side sessions (httpOnly cookie)
 lib/email.js      nodemailer transport (SMTP or console-log fallback)
+lib/ratelimit.js  in-memory per-IP sliding-window rate limiter
 public/           login, dashboard, prepare editor, signer view, status page
   js/pdfview.js   pdf.js rendering wrapper
   js/sigpad.js    draw/type signature capture
