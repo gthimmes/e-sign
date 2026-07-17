@@ -94,7 +94,9 @@ function drawFields() {
     box.style.height = f.h_ratio * p.height + 'px';
     box.dataset.field = f.id;
     renderFieldContent(box, f);
-    box.onclick = () => fillField(f, box);
+    // Option-based fields render their own interactive controls; everything
+    // else is filled by clicking the box.
+    if (f.type !== 'dropdown' && f.type !== 'radio') box.onclick = () => fillField(f, box);
     p.overlay.appendChild(box);
   }
 }
@@ -105,6 +107,47 @@ function renderFieldContent(box, f) {
     // Checkbox is always "rendered"; value 'true' shows a check, else an empty box.
     box.classList.toggle('done', v === 'true');
     box.innerHTML = `<span class="check">${v === 'true' ? '✓' : ''}</span>`;
+    return;
+  }
+  if (f.type === 'dropdown') {
+    const opts = parseOptions(f.options);
+    box.classList.toggle('done', !!v);
+    const sel = document.createElement('select');
+    sel.className = 'field-select';
+    sel.innerHTML = `<option value="">Choose…</option>` +
+      opts.map((o) => `<option value="${esc(o)}"${o === v ? ' selected' : ''}>${esc(o)}</option>`).join('');
+    sel.onclick = (e) => e.stopPropagation();
+    sel.onchange = () => {
+      values[f.id] = sel.value;
+      box.classList.toggle('done', !!sel.value);
+      updateProgress();
+    };
+    box.innerHTML = '';
+    box.appendChild(sel);
+    return;
+  }
+  if (f.type === 'radio') {
+    const opts = parseOptions(f.options);
+    box.classList.toggle('done', !!v);
+    box.innerHTML = '';
+    const list = document.createElement('div');
+    list.className = 'field-radio';
+    opts.forEach((o) => {
+      const id = `r_${f.id}_${opts.indexOf(o)}`;
+      const row = document.createElement('label');
+      row.className = 'radio-row';
+      row.htmlFor = id;
+      row.innerHTML = `<input type="radio" id="${id}" name="radio_${f.id}"${o === v ? ' checked' : ''}/><span>${esc(o)}</span>`;
+      const input = row.querySelector('input');
+      input.onclick = (e) => e.stopPropagation();
+      input.onchange = () => {
+        values[f.id] = o;
+        box.classList.add('done');
+        updateProgress();
+      };
+      list.appendChild(row);
+    });
+    box.appendChild(list);
     return;
   }
   if (v == null || v === '') {
@@ -165,6 +208,11 @@ async function finish() {
 
 // ---- utils ---------------------------------------------------------------
 
+function parseOptions(raw) {
+  if (!raw) return [];
+  if (Array.isArray(raw)) return raw;
+  try { const a = JSON.parse(raw); return Array.isArray(a) ? a : []; } catch { return []; }
+}
 function initialsOf(name) {
   return (name || '').split(/\s+/).filter(Boolean).map((s) => s[0].toUpperCase()).join('');
 }

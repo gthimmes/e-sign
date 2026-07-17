@@ -195,8 +195,8 @@ app.put('/api/documents/:id/prepare', (req, res) => {
     });
 
     const insField = db.prepare(
-      `INSERT INTO fields (id, document_id, recipient_id, page, type, x_ratio, y_ratio, w_ratio, h_ratio, required, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO fields (id, document_id, recipient_id, page, type, x_ratio, y_ratio, w_ratio, h_ratio, required, options, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     );
     for (const f of fields) {
       const rid = idFor[f.recipientKey];
@@ -204,7 +204,7 @@ app.put('/api/documents/:id/prepare', (req, res) => {
       insField.run(
         newId(), d.id, rid, Number(f.page), f.type,
         clamp(f.x_ratio), clamp(f.y_ratio), clamp(f.w_ratio), clamp(f.h_ratio),
-        f.required === false ? 0 : 1, nowIso()
+        f.required === false ? 0 : 1, normalizeOptions(f.type, f.options), nowIso()
       );
     }
   });
@@ -476,6 +476,12 @@ app.post(
       if (f.required && (val == null || val === '')) {
         return res.status(400).json({ error: 'Please complete all required fields.' });
       }
+      // For option-based fields, a provided value must be one of the choices.
+      if ((f.type === 'dropdown' || f.type === 'radio') && val != null && val !== '') {
+        if (!parseOptions(f.options).includes(String(val))) {
+          return res.status(400).json({ error: 'Invalid selection for one of the fields.' });
+        }
+      }
     }
     const setVal = db.prepare('UPDATE fields SET value=? WHERE id=?');
     transaction(() => {
@@ -547,6 +553,19 @@ function clamp(n) {
   const x = Number(n);
   if (Number.isNaN(x)) return 0;
   return Math.max(0, Math.min(1, x));
+}
+// Option-based fields (dropdown | radio) store a JSON array of trimmed,
+// de-duplicated, non-empty choices. Other field types store null.
+function normalizeOptions(type, options) {
+  if (type !== 'dropdown' && type !== 'radio') return null;
+  const list = Array.isArray(options) ? options : [];
+  const clean = [...new Set(list.map((o) => String(o).trim()).filter(Boolean))].slice(0, 30);
+  return clean.length ? JSON.stringify(clean) : JSON.stringify([]);
+}
+// Parse a stored options column back to an array (empty on any problem).
+function parseOptions(raw) {
+  if (!raw) return [];
+  try { const a = JSON.parse(raw); return Array.isArray(a) ? a : []; } catch { return []; }
 }
 function safeName(s) {
   return String(s).replace(/[^a-z0-9._-]+/gi, '_').slice(0, 60) || 'document';

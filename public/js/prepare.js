@@ -12,6 +12,8 @@ const FIELD_TYPES = [
   { type: 'name', label: 'Full name', w: 165, h: 30 },
   { type: 'text', label: 'Text', w: 165, h: 30 },
   { type: 'checkbox', label: 'Checkbox', w: 26, h: 26 },
+  { type: 'dropdown', label: 'Dropdown', w: 165, h: 30, options: true },
+  { type: 'radio', label: 'Radio group', w: 165, h: 92, options: true },
 ];
 
 let recipients = [];      // { key, name, email, color }
@@ -42,7 +44,7 @@ async function init() {
     fields.push({
       key: keySeq++, recipientKey: keyById[f.recipient_id], page: f.page,
       x_ratio: f.x_ratio, y_ratio: f.y_ratio, w_ratio: f.w_ratio, h_ratio: f.h_ratio,
-      type: f.type, required: !!f.required,
+      type: f.type, required: !!f.required, options: parseOptions(f.options),
     });
   });
   if (!recipients.length) addRecipient();
@@ -134,6 +136,12 @@ function onPageClick(e, pageInfo) {
   if (!armedType) return;
   if (!activeRecipient) return toast('Add a signer first.');
   const spec = FIELD_TYPES.find((f) => f.type === armedType);
+  // Option-based fields (dropdown/radio) need their choices up front.
+  let options = [];
+  if (spec.options) {
+    options = promptOptions([]);
+    if (!options) return; // cancelled — don't place
+  }
   const rect = pageInfo.overlay.getBoundingClientRect();
   const px = e.clientX - rect.left;
   const py = e.clientY - rect.top;
@@ -145,7 +153,7 @@ function onPageClick(e, pageInfo) {
     key: keySeq++, recipientKey: activeRecipient, page: pageInfo.page,
     x_ratio: x / pageInfo.width, y_ratio: y / pageInfo.height,
     w_ratio: spec.w / pageInfo.width, h_ratio: spec.h / pageInfo.height,
-    type: armedType, required: true,
+    type: armedType, required: true, options,
   });
   drawFields();
 }
@@ -168,10 +176,20 @@ function drawFields() {
     box.style.borderColor = color;
     box.style.color = color;
     box.style.background = hexToRgba(color, 0.1);
-    const label = FIELD_TYPES.find((t) => t.type === f.type)?.label || f.type;
-    box.innerHTML = `<span class="lbl">${label}</span>
+    const base = FIELD_TYPES.find((t) => t.type === f.type)?.label || f.type;
+    const isOpt = f.type === 'dropdown' || f.type === 'radio';
+    const label = isOpt ? `${base} (${(f.options || []).length}) ✎` : base;
+    box.innerHTML = `<span class="lbl">${esc(label)}</span>
       <button class="del" title="Remove">✕</button><span class="resize"></span>`;
     box.querySelector('.del').onclick = (ev) => { ev.stopPropagation(); fields = fields.filter((x) => x !== f); drawFields(); };
+    if (isOpt) {
+      box.title = 'Double-click to edit options';
+      box.addEventListener('dblclick', (ev) => {
+        ev.stopPropagation();
+        const next = promptOptions(f.options || []);
+        if (next) { f.options = next; drawFields(); }
+      });
+    }
     enableDrag(box, f, p);
     p.overlay.appendChild(box);
   }
@@ -216,6 +234,11 @@ function validate() {
   for (const r of recipients) {
     if (!fields.some((f) => f.recipientKey === r.key)) return `Add at least one field for ${r.name || 'each signer'}.`;
   }
+  for (const f of fields) {
+    if ((f.type === 'dropdown' || f.type === 'radio') && (f.options || []).length < 2) {
+      return 'Dropdown and radio fields need at least two options (double-click the field to edit).';
+    }
+  }
   return null;
 }
 
@@ -224,7 +247,8 @@ async function save() {
     recipients: recipients.map((r, i) => ({ key: r.key, name: r.name, email: r.email, signing_order: i + 1 })),
     fields: fields.map((f) => ({
       recipientKey: f.recipientKey, page: f.page, type: f.type,
-      x_ratio: f.x_ratio, y_ratio: f.y_ratio, w_ratio: f.w_ratio, h_ratio: f.h_ratio, required: f.required,
+      x_ratio: f.x_ratio, y_ratio: f.y_ratio, w_ratio: f.w_ratio, h_ratio: f.h_ratio,
+      required: f.required, options: f.options || [],
     })),
   };
   const res = await fetch(`/api/documents/${docId}/prepare`, {
@@ -260,6 +284,19 @@ el('sendModal').querySelector('[data-close]').onclick = () => { location.href = 
 
 // ---- utils ---------------------------------------------------------------
 
+// Prompt for a comma/newline-separated option list; returns a cleaned array,
+// or null if the user cancels.
+function promptOptions(existing) {
+  const raw = prompt('Enter the choices, separated by commas:', (existing || []).join(', '));
+  if (raw == null) return null;
+  const clean = [...new Set(raw.split(/[,\n]/).map((s) => s.trim()).filter(Boolean))].slice(0, 30);
+  return clean;
+}
+function parseOptions(raw) {
+  if (!raw) return [];
+  if (Array.isArray(raw)) return raw;
+  try { const a = JSON.parse(raw); return Array.isArray(a) ? a : []; } catch { return []; }
+}
 function hexToRgba(hex, a) {
   const n = parseInt(hex.slice(1), 16);
   return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;

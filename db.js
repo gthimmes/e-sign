@@ -46,7 +46,7 @@ CREATE TABLE IF NOT EXISTS fields (
   document_id   TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
   recipient_id  TEXT NOT NULL REFERENCES recipients(id) ON DELETE CASCADE,
   page          INTEGER NOT NULL,        -- 1-based
-  type          TEXT NOT NULL,           -- signature | initials | date | text | name
+  type          TEXT NOT NULL,           -- signature | initials | date | text | name | checkbox | dropdown | radio
   x_ratio       REAL NOT NULL,           -- top-left, fraction of page width
   y_ratio       REAL NOT NULL,           -- top-left, fraction of page height (from top)
   w_ratio       REAL NOT NULL,
@@ -99,6 +99,7 @@ addColumn('recipients', 'invited_at', 'TEXT');
 addColumn('documents', 'tsa_time', 'TEXT');       // TSA-asserted genTime (RFC-3161)
 addColumn('documents', 'tsa_url', 'TEXT');
 addColumn('documents', 'tsr_path', 'TEXT');       // stored timestamp token (.tsr)
+addColumn('fields', 'options', 'TEXT');           // JSON array of choices (dropdown | radio)
 
 // node:sqlite's DatabaseSync has no .transaction() helper (unlike better-sqlite3),
 // so wrap BEGIN/COMMIT/ROLLBACK manually.

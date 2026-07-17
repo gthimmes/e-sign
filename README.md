@@ -28,7 +28,8 @@ authoring actions require signing in. Signer links stay public and token-based.
 1. **Sign in** (or create an account) to reach your dashboard.
 2. **Upload** a PDF.
 3. **Prepare** — add each signer (name + email) and click to drop fields
-   (signature, initials, date, full name, text, checkbox) onto the pages. Fields
+   (signature, initials, date, full name, text, checkbox, dropdown, radio group)
+   onto the pages. Fields
    are color-coded per signer and can be dragged/resized.
 4. **Send** — the document is locked, hashed (SHA-256), a unique tokenized signing
    link is minted per signer, and an **email invitation** is sent to whoever's turn
