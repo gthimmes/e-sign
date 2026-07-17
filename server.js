@@ -115,6 +115,49 @@ app.post('/api/auth/logout', (req, res) => {
 
 // Everything under /api/documents (authoring) requires a signed-in user.
 app.use('/api/documents', requireAuth);
+app.use('/api/templates', requireAuth);
+
+// ---- templates (reusable field layouts) ----------------------------------
+
+const FIELD_TYPE_SET = new Set(['signature', 'initials', 'date', 'name', 'text', 'checkbox', 'dropdown', 'radio']);
+
+app.get('/api/templates', (req, res) => {
+  const rows = db.prepare('SELECT * FROM templates WHERE owner_id=? ORDER BY created_at DESC').all(req.user.id);
+  res.json({ templates: rows.map((t) => ({ ...t, fields: JSON.parse(t.fields) })) });
+});
+
+// Save a layout. Fields reference signers by 1-based role so a template is
+// independent of any particular document's recipients.
+app.post('/api/templates', (req, res) => {
+  const name = String(req.body?.name || '').trim().slice(0, 100);
+  if (!name) return res.status(400).json({ error: 'A template name is required.' });
+  const raw = Array.isArray(req.body?.fields) ? req.body.fields : [];
+  if (!raw.length) return res.status(400).json({ error: 'A template needs at least one field.' });
+  const fields = raw.slice(0, 200).map((f) => {
+    if (!FIELD_TYPE_SET.has(f.type)) return null;
+    return {
+      role: Math.max(1, Math.floor(Number(f.role) || 1)),
+      page: Math.max(1, Math.floor(Number(f.page) || 1)),
+      type: f.type,
+      x_ratio: clamp(f.x_ratio), y_ratio: clamp(f.y_ratio),
+      w_ratio: clamp(f.w_ratio), h_ratio: clamp(f.h_ratio),
+      required: f.required !== false,
+      options: JSON.parse(normalizeOptions(f.type, f.options) || 'null'),
+    };
+  }).filter(Boolean);
+  if (!fields.length) return res.status(400).json({ error: 'No valid fields in template.' });
+  const id = newId();
+  db.prepare('INSERT INTO templates (id, owner_id, name, fields, created_at) VALUES (?, ?, ?, ?, ?)')
+    .run(id, req.user.id, name, JSON.stringify(fields), nowIso());
+  res.json({ template: { id, name, fields } });
+});
+
+app.delete('/api/templates/:id', (req, res) => {
+  const t = db.prepare('SELECT * FROM templates WHERE id=?').get(req.params.id);
+  if (!t || t.owner_id !== req.user.id) return res.status(404).json({ error: 'Not found' });
+  db.prepare('DELETE FROM templates WHERE id=?').run(t.id);
+  res.json({ ok: true });
+});
 
 // ---- document authoring --------------------------------------------------
 

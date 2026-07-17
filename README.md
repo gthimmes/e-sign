@@ -30,7 +30,9 @@ authoring actions require signing in. Signer links stay public and token-based.
 3. **Prepare** — add each signer (name + email) and click to drop fields
    (signature, initials, date, full name, text, checkbox, dropdown, radio group)
    onto the pages. Fields
-   are color-coded per signer and can be dragged/resized.
+   are color-coded per signer and can be dragged/resized. A finished layout can be
+   **saved as a template** (positions stored per signer number) and applied to any
+   future PDF with one click.
 4. **Send** — the document is locked, hashed (SHA-256), a unique tokenized signing
    link is minted per signer, and an **email invitation** is sent to whoever's turn
    it is (respecting signing order). Links are also shown on screen / logged.
@@ -94,7 +96,7 @@ public/           login, dashboard, prepare editor, signer view, status page
 ```
 
 Data model: `users` → `documents` → `recipients` → `fields`, plus an append-only
-`audit_events` log and `sessions`.
+`audit_events` log, `sessions`, and per-user `templates` (reusable field layouts).
 
 ## How the cryptographic seal works
 

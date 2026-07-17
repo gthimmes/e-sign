@@ -75,6 +75,14 @@ CREATE TABLE IF NOT EXISTS users (
   created_at    TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS templates (
+  id            TEXT PRIMARY KEY,
+  owner_id      TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name          TEXT NOT NULL,
+  fields        TEXT NOT NULL,           -- JSON: [{role, page, type, x_ratio, y_ratio, w_ratio, h_ratio, required, options}]
+  created_at    TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS sessions (
   id            TEXT PRIMARY KEY,
   user_id       TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -87,6 +95,7 @@ CREATE INDEX IF NOT EXISTS idx_fields_doc       ON fields(document_id);
 CREATE INDEX IF NOT EXISTS idx_fields_recipient ON fields(recipient_id);
 CREATE INDEX IF NOT EXISTS idx_audit_doc        ON audit_events(document_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_user    ON sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_templates_owner  ON templates(owner_id);
 `);
 
 // Additive migrations for columns introduced after the first release.

@@ -52,12 +52,82 @@ async function init() {
 
   renderRecipients();
   renderTools();
+  loadTemplates();
 
   pagesInfo = await renderPdf(`/api/documents/${docId}/file`, el('viewer'));
   pagesInfo.forEach((p) => {
     p.overlay.addEventListener('click', (e) => onPageClick(e, p));
   });
   drawFields();
+}
+
+// ---- templates -----------------------------------------------------------
+
+async function loadTemplates() {
+  const res = await fetch('/api/templates');
+  if (!res.ok) return;
+  const { templates } = await res.json();
+  const box = el('templateList');
+  if (!templates.length) { box.innerHTML = '<span class="muted">No templates yet — lay out fields, then save.</span>'; return; }
+  box.innerHTML = '';
+  templates.forEach((t) => {
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex; align-items:center; gap:8px';
+    row.innerHTML = `<span style="flex:1"><strong>${esc(t.name)}</strong>
+        <span class="muted">· ${t.fields.length} field(s), ${Math.max(...t.fields.map((f) => f.role))} signer(s)</span></span>
+      <button class="btn sm" data-apply="${t.id}">Apply</button>
+      <button class="btn sm danger" data-tdel="${t.id}" title="Delete template">✕</button>`;
+    row.querySelector('[data-apply]').onclick = () => applyTemplate(t);
+    row.querySelector('[data-tdel]').onclick = async () => {
+      if (!confirm(`Delete template “${t.name}”?`)) return;
+      await fetch(`/api/templates/${t.id}`, { method: 'DELETE' });
+      loadTemplates();
+    };
+    box.appendChild(row);
+  });
+}
+
+el('saveTemplate').onclick = async () => {
+  if (!fields.length) return toast('Place some fields first, then save them as a template.');
+  const name = prompt('Template name:', '');
+  if (name == null || !name.trim()) return;
+  // Map each field's recipient to its 1-based signer position (role).
+  const roleOf = Object.fromEntries(recipients.map((r, i) => [r.key, i + 1]));
+  const payload = {
+    name: name.trim(),
+    fields: fields.map((f) => ({
+      role: roleOf[f.recipientKey] || 1, page: f.page, type: f.type,
+      x_ratio: f.x_ratio, y_ratio: f.y_ratio, w_ratio: f.w_ratio, h_ratio: f.h_ratio,
+      required: f.required, options: f.options || [],
+    })),
+  };
+  const res = await fetch('/api/templates', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+  });
+  const data = await res.json();
+  if (!res.ok) return toast(data.error || 'Could not save template.');
+  toast(`Template “${data.template.name}” saved.`);
+  loadTemplates();
+};
+
+function applyTemplate(t) {
+  const maxRole = Math.max(...t.fields.map((f) => f.role));
+  while (recipients.length < maxRole) addRecipient();
+  const pageCount = pagesInfo.length;
+  let skipped = 0;
+  for (const f of t.fields) {
+    if (f.page > pageCount) { skipped++; continue; }
+    fields.push({
+      key: keySeq++, recipientKey: recipients[f.role - 1].key, page: f.page,
+      x_ratio: f.x_ratio, y_ratio: f.y_ratio, w_ratio: f.w_ratio, h_ratio: f.h_ratio,
+      type: f.type, required: f.required !== false, options: f.options || [],
+    });
+  }
+  renderRecipients();
+  drawFields();
+  toast(skipped
+    ? `Template applied — ${skipped} field(s) skipped (this document has fewer pages).`
+    : `Template “${t.name}” applied.`);
 }
 
 // ---- recipients ----------------------------------------------------------
