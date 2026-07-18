@@ -556,16 +556,18 @@ async function notifyPendingSigners(document, req) {
 async function onCompleted(document, recips, req) {
   const owner = document.owner_id ? db.prepare('SELECT * FROM users WHERE id=?').get(document.owner_id) : null;
   const statusUrl = `${baseUrl(req)}/status.html?id=${document.id}`;
-  const targets = [...recips.map((r) => ({ name: r.name, email: r.email }))];
+  // Signers get their own tokenized link (which now serves the sealed PDF);
+  // the owner gets the status page; CC addresses get a plain notification.
+  const targets = recips.map((r) => ({ name: r.name, email: r.email, url: signUrl(req, r) }));
   if (owner && !targets.some((t) => t.email.toLowerCase() === owner.email)) {
-    targets.push({ name: owner.name || owner.email, email: owner.email });
+    targets.push({ name: owner.name || owner.email, email: owner.email, url: statusUrl });
   }
   let ccNotified = [];
   if (document.cc_list) {
     try {
       for (const c of JSON.parse(document.cc_list)) {
         if (targets.some((t) => t.email.toLowerCase() === c.email.toLowerCase())) continue;
-        targets.push({ name: c.name || c.email, email: c.email });
+        targets.push({ name: c.name || c.email, email: c.email, url: null });
         ccNotified.push(c.email);
       }
     } catch { /* malformed cc_list — skip */ }
@@ -575,7 +577,7 @@ async function onCompleted(document, recips, req) {
   }
   for (const t of targets) {
     try {
-      await sendCompletion({ recipient: t, document, url: statusUrl });
+      await sendCompletion({ recipient: t, document, url: t.url });
     } catch (e) {
       console.error('completion email failed for', t.email, e.message);
     }
@@ -668,6 +670,22 @@ app.get('/api/sign/:token/file', (req, res) => {
   if (linkExpired(v.recipient)) return res.status(410).end();
   if (codeGated(v.recipient)) return res.status(403).end();
   res.type('application/pdf').sendFile(v.document.file_path);
+});
+
+// ESIGN retention: every signer can download the completed, sealed PDF from
+// their own link once all parties have signed.
+app.get('/api/sign/:token/final', (req, res) => {
+  const v = signerView(req.params.token);
+  if (!v) return res.status(404).end();
+  const { recipient, document } = v;
+  if (codeGated(recipient)) return res.status(403).end();
+  if (document.status !== 'completed' || !document.final_path) {
+    return res.status(404).json({ error: 'Not completed yet.' });
+  }
+  logEvent(document.id, { recipientId: recipient.id, type: 'signer.downloaded_final', detail: recipient.email, req });
+  res.type('application/pdf')
+    .setHeader('Content-Disposition', `attachment; filename="${safeName(document.title)}-signed.pdf"`);
+  res.sendFile(document.final_path);
 });
 
 app.post('/api/sign/:token/consent', (req, res) => {

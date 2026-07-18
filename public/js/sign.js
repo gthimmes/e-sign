@@ -24,7 +24,12 @@ async function init() {
   if (state.codeRequired) { showCodeGate(); return; }
 
   if (state.alreadyComplete) {
-    showMessage('ok', '✓ You have already signed this document. Thank you — no further action is needed.');
+    if (state.document.status === 'completed') {
+      showMessage('ok', `✓ This document is complete — all parties have signed.
+        <div style="margin-top:12px"><a class="btn primary" href="/api/sign/${token}/final">⬇ Download your signed copy</a></div>`);
+    } else {
+      showMessage('ok', '✓ You have already signed this document. You will receive the completed copy once all parties have finished.');
+    }
     return;
   }
   if (state.declined || state.document.status === 'voided') {
