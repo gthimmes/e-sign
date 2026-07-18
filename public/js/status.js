@@ -3,12 +3,23 @@ import { requireSession } from '/js/session.js';
 const docId = new URLSearchParams(location.search).get('id');
 const content = document.getElementById('content');
 
-if (await requireSession()) load();
+let currentStatus = null;
+
+if (await requireSession()) {
+  load();
+  // Live refresh while signatures are still coming in, so the sender watches
+  // progress land without reloading. Idles once the document leaves 'sent'
+  // or the tab is hidden.
+  setInterval(() => {
+    if (currentStatus === 'sent' && !document.hidden) load();
+  }, 10_000);
+}
 
 async function load() {
   const res = await fetch(`/api/documents/${docId}/audit`);
   if (!res.ok) { content.innerHTML = '<div class="empty">Document not found.</div>'; return; }
   const { document: d, recipients, events, certInfo } = await res.json();
+  currentStatus = d.status;
   const base = location.origin;
   const isSealed = events.some((e) => e.event_type === 'document.sealed');
 

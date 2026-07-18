@@ -28,7 +28,11 @@ const app = express();
 app.set('trust proxy', true);
 app.use(express.json({ limit: '20mb' }));
 app.use(loadUser);
-app.use(express.static(path.join(__dirname, 'public')));
+// no-cache = always revalidate (304 when unchanged), so browsers pick up new
+// client JS/CSS immediately after a deploy instead of running stale code.
+app.use(express.static(path.join(__dirname, 'public'), {
+  setHeaders: (res) => res.setHeader('Cache-Control', 'no-cache'),
+}));
 
 const baseUrl = (req) => `${req.protocol}://${req.get('host')}`;
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
