@@ -34,10 +34,21 @@ function resetDrop() {
   drop.innerHTML = '<strong>Click to choose</strong> or drop a PDF here';
 }
 
+let showArchived = false;
+
 async function load() {
-  const docs = await (await fetch('/api/documents')).json();
+  const params = new URLSearchParams();
+  const term = document.getElementById('searchBox').value.trim();
+  const status = document.getElementById('statusFilter').value;
+  if (term) params.set('q', term);
+  if (status) params.set('status', status);
+  if (showArchived) params.set('archived', '1');
+  const docs = await (await fetch('/api/documents?' + params)).json();
   if (!docs.length) {
-    rows.innerHTML = '<tr><td colspan="5" class="empty">No documents yet. Click “New document” to begin.</td></tr>';
+    rows.innerHTML = `<tr><td colspan="5" class="empty">${
+      showArchived ? 'No archived documents.'
+      : term || status ? 'Nothing matches your search.'
+      : 'No documents yet. Click “New document” to begin.'}</td></tr>`;
     return;
   }
   rows.innerHTML = '';
@@ -58,11 +69,14 @@ async function load() {
 }
 
 function actions(d) {
-  if (d.status === 'draft') return `<button class="btn sm" data-go="prepare" data-id="${d.id}">Prepare</button>`;
+  const arch = d.archived_at
+    ? `<button class="btn sm" data-arch="unarchive" data-id="${d.id}" title="Restore">↩</button>`
+    : `<button class="btn sm ghost" data-arch="archive" data-id="${d.id}" title="Archive">🗄</button>`;
+  if (d.status === 'draft') return `<button class="btn sm" data-go="prepare" data-id="${d.id}">Prepare</button> ${arch}`;
   if (d.status === 'completed')
     return `<a class="btn sm primary" href="/api/documents/${d.id}/final">Download</a>
-            <button class="btn sm" data-go="audit" data-id="${d.id}">Audit</button>`;
-  return `<button class="btn sm" data-go="status" data-id="${d.id}">View</button>`;
+            <button class="btn sm" data-go="audit" data-id="${d.id}">Audit</button> ${arch}`;
+  return `<button class="btn sm" data-go="status" data-id="${d.id}">View</button> ${arch}`;
 }
 
 function open(d) {
@@ -70,13 +84,36 @@ function open(d) {
   else location.href = `/status.html?id=${d.id}`;
 }
 
-rows.addEventListener('click', (e) => {
+rows.addEventListener('click', async (e) => {
+  const archBtn = e.target.closest('[data-arch]');
+  if (archBtn) {
+    e.stopPropagation();
+    archBtn.disabled = true;
+    await fetch(`/api/documents/${archBtn.dataset.id}/${archBtn.dataset.arch}`, { method: 'POST' });
+    load();
+    return;
+  }
   const btn = e.target.closest('[data-go]');
   if (!btn) return;
   e.stopPropagation();
   const id = btn.dataset.id;
   if (btn.dataset.go === 'prepare') location.href = `/prepare.html?id=${id}`;
   else location.href = `/status.html?id=${id}`;
+});
+
+// search / filter / archived controls
+let searchTimer;
+document.getElementById('searchBox').addEventListener('input', () => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(load, 250);
+});
+document.getElementById('statusFilter').addEventListener('change', load);
+document.getElementById('archivedToggle').addEventListener('click', () => {
+  showArchived = !showArchived;
+  const b = document.getElementById('archivedToggle');
+  b.classList.toggle('primary', showArchived);
+  b.textContent = showArchived ? '🗄 Viewing archived' : '🗄 Archived';
+  load();
 });
 
 function esc(s) { return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }

@@ -112,6 +112,7 @@ addColumn('fields', 'options', 'TEXT');           // JSON array of choices (drop
 addColumn('recipients', 'access_code_hash', 'TEXT');  // optional signer access code (scrypt)
 addColumn('recipients', 'code_verified_at', 'TEXT');
 addColumn('documents', 'cc_list', 'TEXT');        // JSON [{name, email}] notified on completion
+addColumn('documents', 'archived_at', 'TEXT');    // archived docs are hidden from the default list
 
 // node:sqlite's DatabaseSync has no .transaction() helper (unlike better-sqlite3),
 // so wrap BEGIN/COMMIT/ROLLBACK manually.

@@ -192,18 +192,44 @@ app.post(
   })
 );
 
+// List documents with optional search (?q=), status filter (?status=), and
+// an archived view (?archived=1). The default list hides archived docs.
 app.get('/api/documents', (req, res) => {
+  const term = String(req.query.q || '').trim().toLowerCase();
+  const status = String(req.query.status || '').trim();
+  const showArchived = req.query.archived === '1';
   const rows = q.docs.all()
     .filter((d) => !d.owner_id || d.owner_id === req.user.id)
+    .filter((d) => (showArchived ? !!d.archived_at : !d.archived_at))
+    .filter((d) => !status || d.status === status)
     .map((d) => {
-    const recips = q.recips.all(d.id);
-    return {
-      ...d,
-      signers: recips.length,
-      signed: recips.filter((r) => r.status === 'signed').length,
-    };
-  });
+      const recips = q.recips.all(d.id);
+      return {
+        ...d,
+        signers: recips.length,
+        signed: recips.filter((r) => r.status === 'signed').length,
+        _haystack: `${d.title} ${d.original_name} ${recips.map((r) => `${r.name} ${r.email}`).join(' ')}`.toLowerCase(),
+      };
+    })
+    .filter((d) => !term || d._haystack.includes(term))
+    .map(({ _haystack, ...d }) => d);
   res.json(rows);
+});
+
+app.post('/api/documents/:id/archive', (req, res) => {
+  const d = ownedDoc(req, res);
+  if (!d) return;
+  db.prepare('UPDATE documents SET archived_at=? WHERE id=?').run(nowIso(), d.id);
+  logEvent(d.id, { type: 'document.archived', req });
+  res.json({ ok: true });
+});
+
+app.post('/api/documents/:id/unarchive', (req, res) => {
+  const d = ownedDoc(req, res);
+  if (!d) return;
+  db.prepare('UPDATE documents SET archived_at=NULL WHERE id=?').run(d.id);
+  logEvent(d.id, { type: 'document.unarchived', req });
+  res.json({ ok: true });
 });
 
 app.get('/api/documents/:id', (req, res) => {
