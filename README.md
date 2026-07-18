@@ -32,7 +32,9 @@ authoring actions require signing in. Signer links stay public and token-based.
    onto the pages. Fields
    are color-coded per signer and can be dragged/resized. A finished layout can be
    **saved as a template** (positions stored per signer number) and applied to any
-   future PDF with one click.
+   future PDF with one click. With a single-signer template you can also **bulk
+   send**: one draft PDF fans out to up to 100 recipients, each getting their own
+   independent document, signing link, audit trail, and sealed final PDF.
 4. **Send** — the document is locked, hashed (SHA-256), a unique tokenized signing
    link is minted per signer, and an **email invitation** is sent to whoever's turn
    it is (respecting signing order). Links are also shown on screen / logged.
@@ -88,7 +90,7 @@ lib/tsa.js        RFC-3161 trusted timestamping (node-forge ASN.1)
 lib/auth.js       scrypt passwords + server-side sessions (httpOnly cookie)
 lib/email.js      nodemailer transport (SMTP or console-log fallback)
 lib/ratelimit.js  in-memory per-IP sliding-window rate limiter
-public/           login, dashboard, prepare editor, signer view, status page
+public/           login, dashboard, prepare editor, bulk send, signer view, status page
   js/pdfview.js   pdf.js rendering wrapper
   js/sigpad.js    draw/type signature capture
   js/session.js   client-side auth guard

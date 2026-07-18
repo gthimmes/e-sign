@@ -279,6 +279,75 @@ app.post('/api/documents/:id/send', asyncH(async (req, res) => {
   res.json({ ok: true, links, emailMode });
 }));
 
+// Bulk send: fan one draft PDF out to many recipients — one independent,
+// individually-tracked document per person, laid out from a 1-signer template.
+app.post('/api/documents/:id/bulk-send', asyncH(async (req, res) => {
+  const d = ownedDoc(req, res);
+  if (!d) return;
+  if (d.status !== 'draft') return res.status(409).json({ error: 'Bulk send starts from a draft document.' });
+
+  const tpl = db.prepare('SELECT * FROM templates WHERE id=?').get(String(req.body?.templateId || ''));
+  if (!tpl || tpl.owner_id !== req.user.id) return res.status(404).json({ error: 'Template not found.' });
+  const tplFields = JSON.parse(tpl.fields);
+  if (tplFields.some((f) => f.role !== 1)) {
+    return res.status(400).json({ error: 'Bulk send needs a single-signer template (all fields for signer 1).' });
+  }
+
+  const list = Array.isArray(req.body?.recipients) ? req.body.recipients : [];
+  if (!list.length) return res.status(400).json({ error: 'Add at least one recipient.' });
+  if (list.length > 100) return res.status(400).json({ error: 'Bulk send is limited to 100 recipients at a time.' });
+  const recipients = list.map((r) => ({ name: String(r?.name || '').trim(), email: String(r?.email || '').trim() }));
+  const bad = recipients.find((r) => !r.name || !EMAIL_RE.test(r.email));
+  if (bad) return res.status(400).json({ error: `Every recipient needs a name and a valid email (check “${bad.name || bad.email || 'blank line'}”).` });
+
+  // The template's pages must exist in this document.
+  const srcBytes = await fsp.readFile(d.file_path);
+  const pageCount = (await PDFDocument.load(srcBytes)).getPageCount();
+  const maxPage = Math.max(...tplFields.map((f) => f.page));
+  if (maxPage > pageCount) {
+    return res.status(400).json({ error: `The template places fields on page ${maxPage}, but this document has only ${pageCount} page(s).` });
+  }
+
+  const hash = sha256(srcBytes);
+  const created = [];
+  for (const r of recipients) {
+    const docId = newId();
+    const filePath = path.join(UPLOAD_DIR, `${docId}.pdf`);
+    await fsp.copyFile(d.file_path, filePath);
+    const rid = newId();
+    const token = newToken();
+    transaction(() => {
+      db.prepare(
+        `INSERT INTO documents (id, title, original_name, file_path, status, sha256_sent, created_at, sent_at, owner_id)
+         VALUES (?, ?, ?, ?, 'sent', ?, ?, ?, ?)`
+      ).run(docId, `${d.title} — ${r.name}`, d.original_name, filePath, hash, nowIso(), nowIso(), req.user.id);
+      db.prepare(
+        `INSERT INTO recipients (id, document_id, name, email, signing_order, token, status)
+         VALUES (?, ?, ?, ?, 1, ?, 'pending')`
+      ).run(rid, docId, r.name, r.email, token);
+      const insField = db.prepare(
+        `INSERT INTO fields (id, document_id, recipient_id, page, type, x_ratio, y_ratio, w_ratio, h_ratio, required, options, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      );
+      for (const f of tplFields) {
+        insField.run(
+          newId(), docId, rid, f.page, f.type,
+          clamp(f.x_ratio), clamp(f.y_ratio), clamp(f.w_ratio), clamp(f.h_ratio),
+          f.required === false ? 0 : 1, normalizeOptions(f.type, f.options), nowIso()
+        );
+      }
+    });
+    logEvent(docId, { type: 'document.created', detail: `bulk from “${d.title}” via template “${tpl.name}”`, req });
+    logEvent(docId, { type: 'document.sent', detail: `sha256=${hash}`, req });
+    const newDoc = q.doc.get(docId);
+    await notifyPendingSigners(newDoc, req); // emails the invite, records signer.invited
+    created.push({ name: r.name, email: r.email, documentId: docId, url: `${baseUrl(req)}/sign.html?t=${token}` });
+  }
+  logEvent(d.id, { type: 'document.bulk_sent', detail: `${created.length} document(s) via template “${tpl.name}”`, req });
+  console.log(`\n[InkWell] Bulk send: "${d.title}" -> ${created.length} recipient(s).`);
+  res.json({ ok: true, created, emailMode });
+}));
+
 app.post('/api/documents/:id/void', (req, res) => {
   const d = ownedDoc(req, res);
   if (!d) return;

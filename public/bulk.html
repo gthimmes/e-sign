@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Bulk send — InkWell</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div class="topbar">
+    <div class="brand"><span class="dot">✒</span> InkWell</div>
+    <span class="muted">Bulk send</span>
+    <div class="spacer"></div>
+    <span id="userbox" style="display:flex; align-items:center; gap:8px; margin-right:6px"></span>
+    <a class="btn ghost" href="/">← Dashboard</a>
+  </div>
+
+  <div class="wrap">
+    <h1>Bulk send</h1>
+    <p class="sub">Send one PDF to many people at once — each recipient gets their own
+      independent document, signing link, audit trail, and sealed final PDF.</p>
+
+    <div class="card pad" style="margin-bottom:16px">
+      <h2>1 · Choose a draft document</h2>
+      <select id="docSelect" style="width:100%"><option value="">Loading…</option></select>
+      <p class="muted" style="font-size:12px; margin:8px 0 0">Only drafts are listed. Upload a PDF from the dashboard first if you don't see yours.</p>
+    </div>
+
+    <div class="card pad" style="margin-bottom:16px">
+      <h2>2 · Choose a single-signer template</h2>
+      <select id="tplSelect" style="width:100%"><option value="">Loading…</option></select>
+      <p class="muted" style="font-size:12px; margin:8px 0 0">Templates are saved from the prepare editor. Only templates whose fields all belong to signer 1 can be used for bulk send.</p>
+    </div>
+
+    <div class="card pad" style="margin-bottom:16px">
+      <h2>3 · Recipients</h2>
+      <textarea id="recipients" rows="8" style="width:100%; font-family:ui-monospace,monospace; font-size:13px"
+        placeholder="One per line:&#10;Ada Lovelace, ada@example.com&#10;Grace Hopper &lt;grace@example.com&gt;"></textarea>
+      <p class="muted" style="font-size:12px; margin:8px 0 0">Formats: <code>Name, email</code> or <code>Name &lt;email&gt;</code> — up to 100 per batch.</p>
+    </div>
+
+    <button class="btn primary" id="sendBtn">Send to all →</button>
+    <div id="result" style="margin-top:16px"></div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+  <script type="module" src="/js/bulk.js"></script>
+</body>
+</html>
