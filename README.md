@@ -14,6 +14,8 @@ a **retained, tamper-evident record**. InkWell captures all four.
 npm install
 npm start
 # open http://localhost:3000
+
+npm test    # 67-check end-to-end regression suite (isolated scratch DB, no network needed)
 ```
 
 Requires Node 22.5+ (uses the built-in `node:sqlite`). No database server, no cloud

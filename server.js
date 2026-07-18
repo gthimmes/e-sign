@@ -19,7 +19,7 @@ import { sendInvitation, sendCompletion, sendDeclined, sendReminder, emailMode }
 import { rateLimit } from './lib/ratelimit.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const UPLOAD_DIR = path.join(__dirname, 'uploads');
+const UPLOAD_DIR = process.env.INKWELL_UPLOAD_DIR || path.join(__dirname, 'uploads');
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
 ensureSigningCert(); // generate the signing cert on first boot
@@ -90,9 +90,14 @@ function ownedDoc(req, res) {
 // ---- auth ----------------------------------------------------------------
 
 // Throttle credential endpoints per IP to blunt brute-force / enumeration.
-const authLimiter = rateLimit({ max: 10, windowMs: 5 * 60_000, message: 'Too many attempts. Please wait a few minutes and try again.' });
+// The env overrides exist for the test suite, which makes many rapid calls.
+const authLimiter = rateLimit({
+  max: Number(process.env.AUTH_RATE_MAX) || 10,
+  windowMs: 5 * 60_000,
+  message: 'Too many attempts. Please wait a few minutes and try again.',
+});
 // Throttle signer-token endpoints (guessing tokens / hammering submit).
-const signLimiter = rateLimit({ max: 60, windowMs: 60_000 });
+const signLimiter = rateLimit({ max: Number(process.env.SIGN_RATE_MAX) || 60, windowMs: 60_000 });
 
 app.get('/api/auth/me', (req, res) => {
   res.json({ user: req.user ? { id: req.user.id, email: req.user.email, name: req.user.name } : null, emailMode });
