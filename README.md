@@ -61,6 +61,7 @@ All optional — sensible local defaults are used if unset.
 | `SEAL_PASSPHRASE`, `SEAL_CN`, `SEAL_ORG`, `SEAL_COUNTRY` | Signing-certificate passphrase and subject |
 | `TSA_URL` | RFC-3161 Time-Stamping Authority endpoint (default `https://freetsa.org/tsr`). Timestamping is best-effort — if the TSA is unreachable, completion still succeeds and the audit trail records that it was skipped. |
 | `COOKIE_SECURE` | Set `true` behind HTTPS so the session cookie is secure-only |
+| `LINK_EXPIRY_DAYS` | Days before signing links expire (default 30). Sending a reminder automatically mints a fresh link for expired signers. |
 
 ## What makes the signatures "legit"
 

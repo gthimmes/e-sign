@@ -33,6 +33,13 @@ app.use(express.static(path.join(__dirname, 'public')));
 const baseUrl = (req) => `${req.protocol}://${req.get('host')}`;
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 
+// Signing links expire this many days after send; reminders mint fresh links
+// for expired signers automatically.
+const LINK_EXPIRY_DAYS = Number(process.env.LINK_EXPIRY_DAYS) || 30;
+const newExpiry = () => new Date(Date.now() + LINK_EXPIRY_DAYS * 864e5).toISOString();
+const linkExpired = (r) =>
+  r.status !== 'signed' && !!r.token_expires_at && Date.parse(r.token_expires_at) < Date.now();
+
 const upload = multer({
   storage: multer.diskStorage({
     destination: UPLOAD_DIR,
@@ -56,7 +63,7 @@ const q = {
 // Never expose the access-code hash; surface only whether a code is set.
 function publicRecipient(r) {
   const { access_code_hash, ...rest } = r;
-  return { ...rest, has_access_code: !!access_code_hash };
+  return { ...rest, has_access_code: !!access_code_hash, link_expired: linkExpired(r) };
 }
 
 function docPayload(id) {
@@ -332,6 +339,7 @@ app.post('/api/documents/:id/send', asyncH(async (req, res) => {
   const bytes = fs.readFileSync(d.file_path);
   const hash = sha256(bytes);
   db.prepare(`UPDATE documents SET status='sent', sent_at=?, sha256_sent=? WHERE id=?`).run(nowIso(), hash, d.id);
+  db.prepare(`UPDATE recipients SET token_expires_at=? WHERE document_id=?`).run(newExpiry(), d.id);
   logEvent(d.id, { type: 'document.sent', detail: `sha256=${hash}`, req });
 
   const links = recips.map((r) => ({ name: r.name, email: r.email, url: signUrl(req, r) }));
@@ -384,9 +392,9 @@ app.post('/api/documents/:id/bulk-send', asyncH(async (req, res) => {
          VALUES (?, ?, ?, ?, 'sent', ?, ?, ?, ?)`
       ).run(docId, `${d.title} — ${r.name}`, d.original_name, filePath, hash, nowIso(), nowIso(), req.user.id);
       db.prepare(
-        `INSERT INTO recipients (id, document_id, name, email, signing_order, token, status)
-         VALUES (?, ?, ?, ?, 1, ?, 'pending')`
-      ).run(rid, docId, r.name, r.email, token);
+        `INSERT INTO recipients (id, document_id, name, email, signing_order, token, status, token_expires_at)
+         VALUES (?, ?, ?, ?, 1, ?, 'pending', ?)`
+      ).run(rid, docId, r.name, r.email, token, newExpiry());
       const insField = db.prepare(
         `INSERT INTO fields (id, document_id, recipient_id, page, type, x_ratio, y_ratio, w_ratio, h_ratio, required, options, created_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
@@ -426,7 +434,15 @@ app.post('/api/documents/:id/remind', asyncH(async (req, res) => {
   const pending = q.recips.all(d.id).filter((r) => r.status !== 'signed' && r.status !== 'declined' && !blockedByOrder(r));
   if (!pending.length) return res.status(400).json({ error: 'No one is currently awaiting signature.' });
   let sent = 0;
-  for (const r of pending) {
+  for (let r of pending) {
+    // Expired link? Mint a fresh token + expiry so the reminder actually works.
+    if (linkExpired(r)) {
+      const fresh = newToken();
+      db.prepare(`UPDATE recipients SET token=?, token_expires_at=?, code_verified_at=NULL WHERE id=?`)
+        .run(fresh, newExpiry(), r.id);
+      logEvent(d.id, { recipientId: r.id, type: 'signer.link_regenerated', detail: r.email, req });
+      r = { ...r, token: fresh };
+    }
     try {
       await sendReminder({ recipient: r, document: d, url: signUrl(req, r) });
       logEvent(d.id, { recipientId: r.id, type: 'signer.reminded', detail: r.email, req });
@@ -572,6 +588,9 @@ app.get('/api/sign/:token', (req, res) => {
   const v = signerView(req.params.token);
   if (!v) return res.status(404).json({ error: 'Invalid or expired signing link.' });
   const { recipient, document } = v;
+  if (linkExpired(recipient)) {
+    return res.json({ expired: true, document: { title: document.title } });
+  }
   if (recipient.status === 'pending') {
     db.prepare(`UPDATE recipients SET status='viewed', viewed_at=? WHERE id=?`).run(nowIso(), recipient.id);
     logEvent(document.id, { recipientId: recipient.id, type: 'signer.viewed', detail: recipient.email, req });
@@ -605,6 +624,7 @@ app.post('/api/sign/:token/verify-code', codeLimiter, (req, res) => {
   const v = signerView(req.params.token);
   if (!v) return res.status(404).json({ error: 'Invalid link.' });
   const { recipient, document } = v;
+  if (linkExpired(recipient)) return res.status(410).json({ error: 'This signing link has expired.' });
   if (!recipient.access_code_hash) return res.json({ ok: true }); // nothing to verify
   const code = String(req.body?.code || '');
   if (!code || !verifyPassword(code, recipient.access_code_hash)) {
@@ -624,6 +644,7 @@ app.post('/api/sign/:token/verify-code', codeLimiter, (req, res) => {
 app.get('/api/sign/:token/file', (req, res) => {
   const v = signerView(req.params.token);
   if (!v) return res.status(404).end();
+  if (linkExpired(v.recipient)) return res.status(410).end();
   if (codeGated(v.recipient)) return res.status(403).end();
   res.type('application/pdf').sendFile(v.document.file_path);
 });
@@ -632,6 +653,7 @@ app.post('/api/sign/:token/consent', (req, res) => {
   const v = signerView(req.params.token);
   if (!v) return res.status(404).json({ error: 'Invalid link.' });
   const { recipient, document } = v;
+  if (linkExpired(recipient)) return res.status(410).json({ error: 'This signing link has expired.' });
   if (codeGated(recipient)) return res.status(403).json({ error: 'Access code required.' });
   db.prepare(`UPDATE recipients SET consent_at=?, ip=?, user_agent=? WHERE id=?`).run(
     nowIso(), clientIp(req), req.get('user-agent') || null, recipient.id
@@ -650,6 +672,7 @@ app.post('/api/sign/:token/decline', asyncH(async (req, res) => {
   const v = signerView(req.params.token);
   if (!v) return res.status(404).json({ error: 'Invalid link.' });
   const { recipient, document } = v;
+  if (linkExpired(recipient)) return res.status(410).json({ error: 'This signing link has expired.' });
   if (codeGated(recipient)) return res.status(403).json({ error: 'Access code required.' });
   if (recipient.status === 'signed') return res.status(409).json({ error: 'You have already signed.' });
   if (document.status === 'completed') return res.status(409).json({ error: 'This document is already complete.' });
@@ -689,6 +712,7 @@ app.post(
     const v = signerView(req.params.token);
     if (!v) return res.status(404).json({ error: 'Invalid link.' });
     const { recipient, document } = v;
+    if (linkExpired(recipient)) return res.status(410).json({ error: 'This signing link has expired.' });
     if (codeGated(recipient)) return res.status(403).json({ error: 'Access code required.' });
     if (document.status !== 'sent') return res.status(409).json({ error: 'This document is not open for signing.' });
     if (recipient.status === 'signed') return res.status(409).json({ error: 'You have already signed.' });

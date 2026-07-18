@@ -17,6 +17,10 @@ async function init() {
   el('docTitle').textContent = state.document.title;
   el('cTitle').textContent = state.document.title;
 
+  if (state.expired) {
+    showMessage('warn', 'This signing link has <strong>expired</strong>. Ask the sender to send a reminder — it will include a fresh link.');
+    return;
+  }
   if (state.codeRequired) { showCodeGate(); return; }
 
   if (state.alreadyComplete) {

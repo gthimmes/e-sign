@@ -111,7 +111,7 @@ function recipRow(r) {
   return `<tr>
     <td><strong>${esc(r.name)}</strong>${r.has_access_code ? ' <span title="Access code required">🔒</span>' : ''}${r.status === 'declined' && r.decline_reason ? `<div class="muted" style="font-size:12px">Reason: ${esc(r.decline_reason)}</div>` : ''}</td>
     <td class="muted">${esc(r.email)}</td>
-    <td><span class="pill ${pill}">${r.status}</span></td>
+    <td><span class="pill ${pill}">${r.status}</span>${r.link_expired ? '<div class="muted" style="font-size:11px" title="Send a reminder to issue a fresh link">⏰ link expired</div>' : ''}</td>
     <td class="muted">${r.signed_at ? new Date(r.signed_at).toLocaleString() : '—'}</td>
     <td class="muted">${r.ip || '—'}</td>
   </tr>`;
