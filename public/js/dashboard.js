@@ -72,7 +72,9 @@ function actions(d) {
   const arch = d.archived_at
     ? `<button class="btn sm" data-arch="unarchive" data-id="${d.id}" title="Restore">↩</button>`
     : `<button class="btn sm ghost" data-arch="archive" data-id="${d.id}" title="Archive">🗄</button>`;
-  if (d.status === 'draft') return `<button class="btn sm" data-go="prepare" data-id="${d.id}">Prepare</button> ${arch}`;
+  if (d.status === 'draft')
+    return `<button class="btn sm" data-go="prepare" data-id="${d.id}">Prepare</button>
+            <button class="btn sm danger" data-del="${d.id}" title="Delete draft">✕</button> ${arch}`;
   if (d.status === 'completed')
     return `<a class="btn sm primary" href="/api/documents/${d.id}/final">Download</a>
             <button class="btn sm" data-go="audit" data-id="${d.id}">Audit</button> ${arch}`;
@@ -85,6 +87,16 @@ function open(d) {
 }
 
 rows.addEventListener('click', async (e) => {
+  const delBtn = e.target.closest('[data-del]');
+  if (delBtn) {
+    e.stopPropagation();
+    if (!confirm('Permanently delete this draft? This cannot be undone.')) return;
+    delBtn.disabled = true;
+    const res = await fetch(`/api/documents/${delBtn.dataset.del}`, { method: 'DELETE' });
+    if (!res.ok) toast((await res.json()).error || 'Could not delete.');
+    load();
+    return;
+  }
   const archBtn = e.target.closest('[data-arch]');
   if (archBtn) {
     e.stopPropagation();

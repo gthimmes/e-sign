@@ -244,6 +244,20 @@ app.get('/api/documents', (req, res) => {
   res.json(rows);
 });
 
+// Permanently delete a draft (sent/completed docs are legal records — archive
+// or void those instead). Removes the uploaded file and, via FK cascades, all
+// recipients/fields/audit rows.
+app.delete('/api/documents/:id', (req, res) => {
+  const d = ownedDoc(req, res);
+  if (!d) return;
+  if (d.status !== 'draft') {
+    return res.status(409).json({ error: 'Only drafts can be deleted. Void or archive sent documents instead.' });
+  }
+  db.prepare('DELETE FROM documents WHERE id=?').run(d.id);
+  fs.promises.unlink(d.file_path).catch(() => {});
+  res.json({ ok: true });
+});
+
 app.post('/api/documents/:id/archive', (req, res) => {
   const d = ownedDoc(req, res);
   if (!d) return;
