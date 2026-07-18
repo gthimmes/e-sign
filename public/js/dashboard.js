@@ -136,4 +136,19 @@ function toast(msg) {
 }
 
 const session = await requireSession();
-if (session) load();
+if (session) {
+  load();
+  if (new URLSearchParams(location.search).get('verified') === '1') toast('Email verified — thank you!');
+  else if (session.user.verified === false) {
+    const b = document.getElementById('verifyBanner');
+    b.style.display = '';
+    b.style.marginBottom = '14px';
+    b.innerHTML = `Please verify your email address — check your inbox for the confirmation link.
+      <a href="#" id="resendVerify">Resend</a>${session.emailMode === 'log-only' ? ' <span class="muted">(no SMTP configured — the link is printed to the server console)</span>' : ''}`;
+    document.getElementById('resendVerify').onclick = async (e) => {
+      e.preventDefault();
+      await fetch('/api/auth/resend-verification', { method: 'POST' });
+      toast('Verification email re-sent.');
+    };
+  }
+}

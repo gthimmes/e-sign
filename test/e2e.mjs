@@ -350,6 +350,32 @@ assert(res.ok, 'password changed');
 res = await api('/api/auth/login', { method: 'POST', json: { email: 'owner@test.local', password: 'password456' } });
 assert(res.ok, 'new password logs in');
 
+// ---- email verification --------------------------------------------------
+
+section('email verification');
+res = await api('/api/auth/me');
+assert((await res.json()).user.verified === false, 'new account starts unverified');
+{
+  const crypto = await import('node:crypto');
+  const verifyTok = 'test-verify-token-abc';
+  const sdb = new DatabaseSync(path.join(DATA_DIR, 'inkwell.db'));
+  const u = sdb.prepare(`SELECT * FROM users WHERE email='owner@test.local'`).get();
+  assert(u.verify_token_hash && u.verify_token_hash.length === 64, 'verify token stored hashed');
+  sdb.prepare('UPDATE users SET verify_token_hash=? WHERE id=?')
+    .run(crypto.createHash('sha256').update(verifyTok).digest('hex'), u.id);
+  sdb.close();
+  res = await fetch(`${BASE}/api/auth/verify?t=wrong`, { redirect: 'manual' });
+  assert(res.status === 400, 'bad verify token rejected');
+  res = await fetch(`${BASE}/api/auth/verify?t=${verifyTok}`, { redirect: 'manual' });
+  assert(res.status === 302, 'verify link redirects home');
+  res = await fetch(`${BASE}/api/auth/verify?t=${verifyTok}`, { redirect: 'manual' });
+  assert(res.status === 400, 'verify token single-use');
+}
+res = await api('/api/auth/me');
+assert((await res.json()).user.verified === true, 'account now verified');
+res = await api('/api/auth/resend-verification', { method: 'POST' });
+assert((await res.json()).alreadyVerified === true, 'resend after verify is a no-op');
+
 // ---- password reset ------------------------------------------------------
 
 section('password reset');

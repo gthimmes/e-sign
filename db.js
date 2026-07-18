@@ -127,6 +127,8 @@ addColumn('recipients', 'code_verified_at', 'TEXT');
 addColumn('documents', 'cc_list', 'TEXT');        // JSON [{name, email}] notified on completion
 addColumn('documents', 'archived_at', 'TEXT');    // archived docs are hidden from the default list
 addColumn('recipients', 'token_expires_at', 'TEXT'); // signing links expire (LINK_EXPIRY_DAYS)
+addColumn('users', 'verified_at', 'TEXT');        // email verification (soft gate)
+addColumn('users', 'verify_token_hash', 'TEXT');
 
 // node:sqlite's DatabaseSync has no .transaction() helper (unlike better-sqlite3),
 // so wrap BEGIN/COMMIT/ROLLBACK manually.

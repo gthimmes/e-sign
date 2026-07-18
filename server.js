@@ -15,7 +15,7 @@ import {
   createUser, getUserByEmail, verifyPassword, hashPassword, createSession, destroySession,
   setSessionCookie, clearSessionCookie, loadUser, requireAuth,
 } from './lib/auth.js';
-import { sendInvitation, sendCompletion, sendDeclined, sendReminder, sendPasswordReset, emailMode } from './lib/email.js';
+import { sendInvitation, sendCompletion, sendDeclined, sendReminder, sendPasswordReset, sendVerification, emailMode } from './lib/email.js';
 import { rateLimit } from './lib/ratelimit.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -100,10 +100,15 @@ const authLimiter = rateLimit({
 const signLimiter = rateLimit({ max: Number(process.env.SIGN_RATE_MAX) || 60, windowMs: 60_000 });
 
 app.get('/api/auth/me', (req, res) => {
-  res.json({ user: req.user ? { id: req.user.id, email: req.user.email, name: req.user.name } : null, emailMode });
+  res.json({
+    user: req.user
+      ? { id: req.user.id, email: req.user.email, name: req.user.name, verified: !!req.user.verified_at }
+      : null,
+    emailMode,
+  });
 });
 
-app.post('/api/auth/register', authLimiter, (req, res) => {
+app.post('/api/auth/register', authLimiter, asyncH(async (req, res) => {
   const { email, name, password } = req.body || {};
   if (!email || !EMAIL_RE.test(email)) return res.status(400).json({ error: 'A valid email is required.' });
   if (!password || password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters.' });
@@ -111,8 +116,35 @@ app.post('/api/auth/register', authLimiter, (req, res) => {
   const user = createUser({ email, name, password });
   const session = createSession(user.id);
   setSessionCookie(res, session);
+  await sendVerificationFor(user, req);
   res.json({ user: { id: user.id, email: user.email, name: user.name } });
+}));
+
+// Verification is a soft gate: unverified accounts work, but the dashboard
+// nudges until the emailed link is clicked.
+async function sendVerificationFor(user, req) {
+  const token = newToken();
+  db.prepare('UPDATE users SET verify_token_hash=? WHERE id=?').run(sha256(Buffer.from(token)), user.id);
+  try {
+    await sendVerification({ user, url: `${baseUrl(req)}/api/auth/verify?t=${token}` });
+  } catch (e) {
+    console.error('verification email failed for', user.email, e.message);
+  }
+}
+
+app.get('/api/auth/verify', (req, res) => {
+  const row = db.prepare('SELECT * FROM users WHERE verify_token_hash=?')
+    .get(sha256(Buffer.from(String(req.query.t || ''))));
+  if (!row) return res.status(400).send('This verification link is invalid or was already used.');
+  db.prepare('UPDATE users SET verified_at=?, verify_token_hash=NULL WHERE id=?').run(nowIso(), row.id);
+  res.redirect('/?verified=1');
 });
+
+app.post('/api/auth/resend-verification', requireAuth, authLimiter, asyncH(async (req, res) => {
+  if (req.user.verified_at) return res.json({ ok: true, alreadyVerified: true });
+  await sendVerificationFor(req.user, req);
+  res.json({ ok: true, emailMode });
+}));
 
 app.post('/api/auth/login', authLimiter, (req, res) => {
   const { email, password } = req.body || {};
