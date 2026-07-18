@@ -126,6 +126,27 @@ app.post('/api/auth/logout', (req, res) => {
   res.json({ ok: true });
 });
 
+// Update display name.
+app.put('/api/auth/profile', requireAuth, (req, res) => {
+  const name = String(req.body?.name || '').trim().slice(0, 100);
+  db.prepare('UPDATE users SET name=? WHERE id=?').run(name || null, req.user.id);
+  res.json({ user: { id: req.user.id, email: req.user.email, name: name || null } });
+});
+
+// Change password: requires the current password; revokes every other session.
+app.put('/api/auth/password', requireAuth, authLimiter, (req, res) => {
+  const { current, next } = req.body || {};
+  if (!verifyPassword(current || '', req.user.password_hash)) {
+    return res.status(401).json({ error: 'Your current password is incorrect.' });
+  }
+  if (!next || next.length < 8) {
+    return res.status(400).json({ error: 'New password must be at least 8 characters.' });
+  }
+  db.prepare('UPDATE users SET password_hash=? WHERE id=?').run(hashPassword(next), req.user.id);
+  const revoked = db.prepare('DELETE FROM sessions WHERE user_id=? AND id!=?').run(req.user.id, req.sessionId);
+  res.json({ ok: true, revokedSessions: revoked.changes });
+});
+
 // Everything under /api/documents (authoring) requires a signed-in user.
 app.use('/api/documents', requireAuth);
 app.use('/api/templates', requireAuth);

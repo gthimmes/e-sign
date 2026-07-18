@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Settings — InkWell</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div class="topbar">
+    <div class="brand"><span class="dot">✒</span> InkWell</div>
+    <span class="muted">Account settings</span>
+    <div class="spacer"></div>
+    <span id="userbox" style="display:flex; align-items:center; gap:8px; margin-right:6px"></span>
+    <a class="btn ghost" href="/">← Dashboard</a>
+  </div>
+
+  <div class="wrap" style="max-width:560px">
+    <h1>Account settings</h1>
+    <p class="sub" id="whoami"></p>
+
+    <div class="card pad" style="margin-bottom:16px">
+      <h2>Profile</h2>
+      <label class="muted" style="font-size:13px">Display name</label>
+      <input type="text" id="nameInput" placeholder="Your name" style="width:100%; margin:6px 0 12px" />
+      <button class="btn primary" id="saveName">Save name</button>
+    </div>
+
+    <div class="card pad">
+      <h2>Change password</h2>
+      <label class="muted" style="font-size:13px">Current password</label>
+      <input type="password" id="curPass" autocomplete="current-password" style="width:100%; margin:6px 0 12px" />
+      <label class="muted" style="font-size:13px">New password (min 8 characters)</label>
+      <input type="password" id="newPass" autocomplete="new-password" style="width:100%; margin:6px 0 12px" />
+      <label class="muted" style="font-size:13px">Confirm new password</label>
+      <input type="password" id="newPass2" autocomplete="new-password" style="width:100%; margin:6px 0 12px" />
+      <button class="btn primary" id="savePass">Change password</button>
+      <p class="muted" style="font-size:12px; margin:10px 0 0">Changing your password signs you out everywhere else.</p>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+  <script type="module" src="/js/settings.js"></script>
+</body>
+</html>

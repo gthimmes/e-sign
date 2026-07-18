@@ -18,7 +18,7 @@ export async function requireSession() {
 function renderUserbox(user) {
   const box = document.getElementById('userbox');
   if (!box) return;
-  box.innerHTML = `<span class="muted" style="font-size:13px">${esc(user.email)}</span>
+  box.innerHTML = `<a class="muted" href="/settings.html" title="Account settings" style="font-size:13px; text-decoration:none">${esc(user.email)} ⚙</a>
     <button class="btn ghost sm" id="logoutBtn">Log out</button>`;
   document.getElementById('logoutBtn').onclick = async () => {
     await fetch('/api/auth/logout', { method: 'POST' });
