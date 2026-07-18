@@ -111,6 +111,7 @@ addColumn('documents', 'tsr_path', 'TEXT');       // stored timestamp token (.ts
 addColumn('fields', 'options', 'TEXT');           // JSON array of choices (dropdown | radio)
 addColumn('recipients', 'access_code_hash', 'TEXT');  // optional signer access code (scrypt)
 addColumn('recipients', 'code_verified_at', 'TEXT');
+addColumn('documents', 'cc_list', 'TEXT');        // JSON [{name, email}] notified on completion
 
 // node:sqlite's DatabaseSync has no .transaction() helper (unlike better-sqlite3),
 // so wrap BEGIN/COMMIT/ROLLBACK manually.

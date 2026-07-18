@@ -36,6 +36,7 @@ async function load() {
         <thead><tr><th>Name</th><th>Email</th><th>Status</th><th>Signed</th><th>IP</th></tr></thead>
         <tbody>${recipients.map(recipRow).join('')}</tbody>
       </table>
+      ${ccListHtml(d)}
     </div>
 
     ${links && d.status === 'sent' ? `<div class="card pad" style="margin-bottom:16px">
@@ -95,6 +96,14 @@ async function load() {
     toast(`Reminder sent to ${data.reminded.join(', ')}${data.emailMode === 'log-only' ? ' (logged)' : ''}.`);
     load();
   };
+}
+
+function ccListHtml(d) {
+  try {
+    const cc = JSON.parse(d.cc_list || '[]');
+    if (!cc.length) return '';
+    return `<p class="muted" style="font-size:12px; margin:10px 0 0">CC on completion: ${cc.map((c) => esc(c.name ? `${c.name} <${c.email}>` : c.email)).join(', ')}</p>`;
+  } catch { return ''; }
 }
 
 function recipRow(r) {

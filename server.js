@@ -227,6 +227,17 @@ app.put('/api/documents/:id/prepare', (req, res) => {
   const { recipients = [], fields = [] } = req.body;
   if (!recipients.length) return res.status(400).json({ error: 'Add at least one recipient.' });
 
+  // Optional CC list: notified (not signers) when the document completes.
+  let ccList = null;
+  if (req.body.cc != null) {
+    const raw = Array.isArray(req.body.cc) ? req.body.cc.slice(0, 20) : [];
+    const cc = raw.map((c) => ({ name: String(c?.name || '').trim(), email: String(c?.email || '').trim() }))
+      .filter((c) => c.email);
+    const badCc = cc.find((c) => !EMAIL_RE.test(c.email));
+    if (badCc) return res.status(400).json({ error: `“${badCc.email}” is not a valid CC email.` });
+    ccList = cc.length ? JSON.stringify(cc) : null;
+  }
+
   // Access codes are write-only: a save either sets a new code, keeps the one
   // already stored for that email (keep_code), or clears it. Snapshot existing
   // hashes before the delete-and-recreate below.
@@ -275,7 +286,8 @@ app.put('/api/documents/:id/prepare', (req, res) => {
       );
     }
   });
-  logEvent(d.id, { type: 'document.prepared', detail: `${recipients.length} recipient(s), ${fields.length} field(s)`, req });
+  db.prepare('UPDATE documents SET cc_list=? WHERE id=?').run(ccList, d.id);
+  logEvent(d.id, { type: 'document.prepared', detail: `${recipients.length} recipient(s), ${fields.length} field(s)${ccList ? `, ${JSON.parse(ccList).length} cc` : ''}`, req });
   res.json(docPayload(d.id));
 });
 
@@ -476,13 +488,27 @@ async function notifyPendingSigners(document, req) {
   }
 }
 
-// When a document completes, notify all signers (and the owner) with a status link.
+// When a document completes, notify all signers, the owner, and any CC
+// addresses with a status link.
 async function onCompleted(document, recips, req) {
   const owner = document.owner_id ? db.prepare('SELECT * FROM users WHERE id=?').get(document.owner_id) : null;
   const statusUrl = `${baseUrl(req)}/status.html?id=${document.id}`;
   const targets = [...recips.map((r) => ({ name: r.name, email: r.email }))];
   if (owner && !targets.some((t) => t.email.toLowerCase() === owner.email)) {
     targets.push({ name: owner.name || owner.email, email: owner.email });
+  }
+  let ccNotified = [];
+  if (document.cc_list) {
+    try {
+      for (const c of JSON.parse(document.cc_list)) {
+        if (targets.some((t) => t.email.toLowerCase() === c.email.toLowerCase())) continue;
+        targets.push({ name: c.name || c.email, email: c.email });
+        ccNotified.push(c.email);
+      }
+    } catch { /* malformed cc_list — skip */ }
+  }
+  if (ccNotified.length) {
+    logEvent(document.id, { type: 'document.cc_notified', detail: ccNotified.join(', ') });
   }
   for (const t of targets) {
     try {

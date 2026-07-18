@@ -50,6 +50,12 @@ async function init() {
   if (!recipients.length) addRecipient();
   activeRecipient = recipients[0].key;
 
+  // Rehydrate the CC list.
+  try {
+    const cc = JSON.parse(data.document.cc_list || '[]');
+    el('ccBox').value = cc.map((c) => (c.name ? `${c.name}, ${c.email}` : c.email)).join('\n');
+  } catch { /* ignore */ }
+
   renderRecipients();
   renderTools();
   loadTemplates();
@@ -330,6 +336,7 @@ async function save() {
       x_ratio: f.x_ratio, y_ratio: f.y_ratio, w_ratio: f.w_ratio, h_ratio: f.h_ratio,
       required: f.required, options: f.options || [],
     })),
+    cc: parseCcLines(el('ccBox').value),
   };
   const res = await fetch(`/api/documents/${docId}/prepare`, {
     method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
@@ -363,6 +370,21 @@ el('confirmSend').style.display = 'none';
 el('sendModal').querySelector('[data-close]').onclick = () => { location.href = '/'; };
 
 // ---- utils ---------------------------------------------------------------
+
+// Parse CC lines: "Name, email", "Name <email>", or a bare email per line.
+function parseCcLines(text) {
+  const out = [];
+  for (const line of (text || '').split('\n')) {
+    const s = line.trim();
+    if (!s) continue;
+    const angle = s.match(/^(.*?)[\s,]*<([^>]+)>\s*$/);
+    if (angle) { out.push({ name: angle[1].trim(), email: angle[2].trim() }); continue; }
+    const comma = s.split(',');
+    if (comma.length >= 2) { out.push({ name: comma.slice(0, -1).join(',').trim(), email: comma[comma.length - 1].trim() }); continue; }
+    out.push({ name: '', email: s });
+  }
+  return out;
+}
 
 // Prompt for a comma/newline-separated option list; returns a cleaned array,
 // or null if the user cancels.
