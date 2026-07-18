@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Reset password — InkWell</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div class="topbar">
+    <div class="brand"><span class="dot">✒</span> InkWell</div>
+  </div>
+
+  <div class="wrap" style="max-width:420px">
+    <div class="card pad" style="margin-top:40px">
+      <h1>Choose a new password</h1>
+      <p class="sub">Your reset link is valid for one hour. Changing your password signs you out everywhere.</p>
+
+      <div id="error" class="banner warn" style="display:none"></div>
+
+      <label class="fld">New password (min 8 characters)</label>
+      <input type="password" id="pass" autocomplete="new-password" />
+
+      <label class="fld">Confirm new password</label>
+      <input type="password" id="pass2" autocomplete="new-password" />
+
+      <button class="btn primary" id="submitBtn" style="width:100%; justify-content:center; margin-top:18px">Set new password</button>
+
+      <div id="done" class="banner ok" style="display:none; margin-top:16px">
+        Password updated. <a href="/login.html">Sign in →</a>
+      </div>
+    </div>
+  </div>
+
+  <script type="module">
+    const el = (id) => document.getElementById(id);
+    const token = new URLSearchParams(location.search).get('t');
+    const showErr = (m) => { el('error').textContent = m; el('error').style.display = ''; };
+    el('submitBtn').onclick = async () => {
+      el('error').style.display = 'none';
+      const password = el('pass').value;
+      if (password !== el('pass2').value) return showErr('Passwords do not match.');
+      el('submitBtn').disabled = true;
+      const res = await fetch('/api/auth/reset', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token, password }),
+      });
+      const data = await res.json().catch(() => ({}));
+      el('submitBtn').disabled = false;
+      if (!res.ok) return showErr(data.error || 'Could not reset password.');
+      el('done').style.display = '';
+      el('submitBtn').style.display = 'none';
+    };
+  </script>
+</body>
+</html>

@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Forgot password — InkWell</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div class="topbar">
+    <div class="brand"><span class="dot">✒</span> InkWell</div>
+  </div>
+
+  <div class="wrap" style="max-width:420px">
+    <div class="card pad" style="margin-top:40px">
+      <h1>Forgot password</h1>
+      <p class="sub">Enter your account email and we'll send a reset link (valid for 1 hour).</p>
+
+      <label class="fld">Email</label>
+      <input type="email" id="email" placeholder="you@example.com" autocomplete="username" />
+
+      <button class="btn primary" id="submitBtn" style="width:100%; justify-content:center; margin-top:18px">Send reset link</button>
+
+      <div id="done" class="banner ok" style="display:none; margin-top:16px">
+        If an account exists for that address, a reset link has been sent.
+        <span id="logNote" style="display:none"><br/><em>No SMTP is configured — the link was printed to the server console.</em></span>
+      </div>
+
+      <p class="muted" style="text-align:center; margin-top:16px; font-size:13px">
+        <a href="/login.html">← Back to sign in</a>
+      </p>
+    </div>
+  </div>
+
+  <script type="module">
+    const el = (id) => document.getElementById(id);
+    el('submitBtn').onclick = async () => {
+      const email = el('email').value.trim();
+      if (!email) return;
+      el('submitBtn').disabled = true;
+      const res = await fetch('/api/auth/forgot', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email }),
+      });
+      const data = await res.json().catch(() => ({}));
+      el('submitBtn').disabled = false;
+      el('done').style.display = '';
+      if (data.emailMode === 'log-only') el('logNote').style.display = '';
+    };
+    el('email').addEventListener('keydown', (e) => { if (e.key === 'Enter') el('submitBtn').click(); });
+  </script>
+</body>
+</html>

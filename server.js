@@ -15,7 +15,7 @@ import {
   createUser, getUserByEmail, verifyPassword, hashPassword, createSession, destroySession,
   setSessionCookie, clearSessionCookie, loadUser, requireAuth,
 } from './lib/auth.js';
-import { sendInvitation, sendCompletion, sendDeclined, sendReminder, emailMode } from './lib/email.js';
+import { sendInvitation, sendCompletion, sendDeclined, sendReminder, sendPasswordReset, emailMode } from './lib/email.js';
 import { rateLimit } from './lib/ratelimit.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -128,6 +128,44 @@ app.post('/api/auth/login', authLimiter, (req, res) => {
 app.post('/api/auth/logout', (req, res) => {
   destroySession(req.sessionId);
   clearSessionCookie(res);
+  res.json({ ok: true });
+});
+
+// Request a password reset. Always answers 200 so the endpoint can't be used
+// to enumerate accounts; a reset link is emailed only if the account exists.
+app.post('/api/auth/forgot', authLimiter, asyncH(async (req, res) => {
+  const user = getUserByEmail(String(req.body?.email || ''));
+  if (user) {
+    const token = newToken();
+    db.prepare('DELETE FROM password_resets WHERE user_id=?').run(user.id); // one active reset at a time
+    db.prepare('INSERT INTO password_resets (id, user_id, token_hash, created_at, expires_at) VALUES (?, ?, ?, ?, ?)')
+      .run(newId(), user.id, sha256(Buffer.from(token)), nowIso(), new Date(Date.now() + 60 * 60_000).toISOString());
+    const url = `${baseUrl(req)}/reset.html?t=${token}`;
+    try {
+      await sendPasswordReset({ user, url });
+    } catch (e) {
+      console.error('reset email failed for', user.email, e.message);
+    }
+  }
+  res.json({ ok: true, emailMode });
+}));
+
+// Complete a password reset with the emailed token.
+app.post('/api/auth/reset', authLimiter, (req, res) => {
+  const { token, password } = req.body || {};
+  if (!password || password.length < 8) {
+    return res.status(400).json({ error: 'Password must be at least 8 characters.' });
+  }
+  const row = db.prepare('SELECT * FROM password_resets WHERE token_hash=?')
+    .get(sha256(Buffer.from(String(token || ''))));
+  if (!row || row.used_at || Date.parse(row.expires_at) < Date.now()) {
+    return res.status(400).json({ error: 'This reset link is invalid or has expired. Request a new one.' });
+  }
+  transaction(() => {
+    db.prepare('UPDATE users SET password_hash=? WHERE id=?').run(hashPassword(password), row.user_id);
+    db.prepare('UPDATE password_resets SET used_at=? WHERE id=?').run(nowIso(), row.id);
+    db.prepare('DELETE FROM sessions WHERE user_id=?').run(row.user_id); // sign out everywhere
+  });
   res.json({ ok: true });
 });
 

@@ -350,6 +350,42 @@ assert(res.ok, 'password changed');
 res = await api('/api/auth/login', { method: 'POST', json: { email: 'owner@test.local', password: 'password456' } });
 assert(res.ok, 'new password logs in');
 
+// ---- password reset ------------------------------------------------------
+
+section('password reset');
+res = await api('/api/auth/forgot', { method: 'POST', json: { email: 'nobody@test.local' } });
+assert(res.ok, 'unknown email still answers 200 (no enumeration)');
+res = await api('/api/auth/forgot', { method: 'POST', json: { email: 'owner@test.local' } });
+assert(res.ok, 'reset requested');
+// email is log-only, so pull the token via its hash from the scratch DB and
+// mint a request the way the emailed link would.
+let resetToken;
+{
+  const sdb = new DatabaseSync(path.join(DATA_DIR, 'inkwell.db'));
+  const row = sdb.prepare(`SELECT pr.* FROM password_resets pr JOIN users u ON u.id=pr.user_id WHERE u.email='owner@test.local'`).get();
+  assert(row && !row.used_at, 'reset row created unused');
+  assert(row.token_hash.length === 64, 'token stored as sha256, not plaintext');
+  // We can't invert the hash — so instead verify the API contract directly:
+  // a made-up token fails, then simulate the real one by planting a known hash.
+  const crypto = await import('node:crypto');
+  resetToken = 'test-reset-token-123456';
+  sdb.prepare('UPDATE password_resets SET token_hash=? WHERE id=?')
+    .run(crypto.createHash('sha256').update(resetToken).digest('hex'), row.id);
+  sdb.close();
+}
+res = await api('/api/auth/reset', { method: 'POST', json: { token: 'wrong-token', password: 'brandnewpass1' } });
+assert(res.status === 400, 'bad token rejected');
+res = await api('/api/auth/reset', { method: 'POST', json: { token: resetToken, password: 'short' } });
+assert(res.status === 400, 'short password rejected');
+res = await api('/api/auth/reset', { method: 'POST', json: { token: resetToken, password: 'brandnewpass1' } });
+assert(res.ok, 'reset succeeds');
+res = await api('/api/auth/reset', { method: 'POST', json: { token: resetToken, password: 'anotherpass1' } });
+assert(res.status === 400, 'token single-use');
+res = await api('/api/auth/me');
+assert((await res.json()).user === null, 'all sessions revoked by reset');
+res = await api('/api/auth/login', { method: 'POST', json: { email: 'owner@test.local', password: 'brandnewpass1' } });
+assert(res.ok, 'reset password logs in');
+
 // ---- rate limiter (unit) -------------------------------------------------
 
 section('rate limiter');

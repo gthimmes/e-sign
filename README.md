@@ -15,7 +15,7 @@ npm install
 npm start
 # open http://localhost:3000
 
-npm test    # 67-check end-to-end regression suite (isolated scratch DB, no network needed)
+npm test    # 77-check end-to-end regression suite (isolated scratch DB, no network needed)
 ```
 
 Requires Node 22.5+ (uses the built-in `node:sqlite`). No database server, no cloud
@@ -143,7 +143,8 @@ This detached token proves *when*; it complements the PKCS#7 seal that proves
   Adobe Reader show the timestamp natively.
 - **Publicly-trusted signing certificate** — swap the self-signed cert for one from
   a CA in Adobe's Approved Trust List (AATL) to get a green check in Reader.
-- **Password reset & email verification** flows for sender accounts.
-- **Encryption at rest**, backups, rate limiting, and retention policies.
+- **Email verification** at registration for sender accounts (password reset
+  exists; verification does not yet).
+- **Encryption at rest**, backups, and retention policies.
 
 Not legal advice — consult counsel for your jurisdiction and use case.
