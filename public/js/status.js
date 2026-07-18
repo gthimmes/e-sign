@@ -100,7 +100,7 @@ async function load() {
 function recipRow(r) {
   const pill = r.status === 'signed' ? 'completed' : r.status === 'declined' ? 'voided' : 'sent';
   return `<tr>
-    <td><strong>${esc(r.name)}</strong>${r.status === 'declined' && r.decline_reason ? `<div class="muted" style="font-size:12px">Reason: ${esc(r.decline_reason)}</div>` : ''}</td>
+    <td><strong>${esc(r.name)}</strong>${r.has_access_code ? ' <span title="Access code required">🔒</span>' : ''}${r.status === 'declined' && r.decline_reason ? `<div class="muted" style="font-size:12px">Reason: ${esc(r.decline_reason)}</div>` : ''}</td>
     <td class="muted">${esc(r.email)}</td>
     <td><span class="pill ${pill}">${r.status}</span></td>
     <td class="muted">${r.signed_at ? new Date(r.signed_at).toLocaleString() : '—'}</td>

@@ -109,6 +109,8 @@ addColumn('documents', 'tsa_time', 'TEXT');       // TSA-asserted genTime (RFC-3
 addColumn('documents', 'tsa_url', 'TEXT');
 addColumn('documents', 'tsr_path', 'TEXT');       // stored timestamp token (.tsr)
 addColumn('fields', 'options', 'TEXT');           // JSON array of choices (dropdown | radio)
+addColumn('recipients', 'access_code_hash', 'TEXT');  // optional signer access code (scrypt)
+addColumn('recipients', 'code_verified_at', 'TEXT');
 
 // node:sqlite's DatabaseSync has no .transaction() helper (unlike better-sqlite3),
 // so wrap BEGIN/COMMIT/ROLLBACK manually.

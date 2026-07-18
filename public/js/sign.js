@@ -17,6 +17,8 @@ async function init() {
   el('docTitle').textContent = state.document.title;
   el('cTitle').textContent = state.document.title;
 
+  if (state.codeRequired) { showCodeGate(); return; }
+
   if (state.alreadyComplete) {
     showMessage('ok', '✓ You have already signed this document. Thank you — no further action is needed.');
     return;
@@ -32,6 +34,40 @@ async function init() {
 
   if (state.recipient.consented) startSigning();
   else openConsent();
+}
+
+// ---- access code gate ----------------------------------------------------
+
+function showCodeGate() {
+  el('message').innerHTML = `
+    <div class="banner info">🔒 <strong>${esc(state.recipient.name)}</strong>, this document is protected.
+      Enter the access code the sender shared with you.</div>
+    <div class="card pad" style="max-width:420px; margin:16px auto">
+      <h2>Access code</h2>
+      <input type="password" id="codeInput" autocomplete="one-time-code" placeholder="Enter access code"
+        style="width:100%; margin-bottom:10px" />
+      <button class="btn primary" id="codeBtn" style="width:100%">Unlock document</button>
+      <p class="muted" id="codeErr" style="font-size:12px; margin:10px 0 0"></p>
+    </div>`;
+  const submit = async () => {
+    const code = el('codeInput').value.trim();
+    if (!code) return;
+    el('codeBtn').disabled = true;
+    const res = await fetch(`/api/sign/${token}/verify-code`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      el('codeBtn').disabled = false;
+      el('codeErr').textContent = data.error || 'That code is incorrect.';
+      el('codeInput').select();
+      return;
+    }
+    init(); // reload the full signer view now that we're unlocked
+  };
+  el('codeBtn').onclick = submit;
+  el('codeInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(); });
+  el('codeInput').focus();
 }
 
 // ---- consent -------------------------------------------------------------

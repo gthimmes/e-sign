@@ -12,7 +12,7 @@ import { buildFinalPdf } from './lib/pdfStamp.js';
 import { ensureSigningCert, getCertInfo, sealPdf } from './lib/pki.js';
 import { timestamp } from './lib/tsa.js';
 import {
-  createUser, getUserByEmail, verifyPassword, createSession, destroySession,
+  createUser, getUserByEmail, verifyPassword, hashPassword, createSession, destroySession,
   setSessionCookie, clearSessionCookie, loadUser, requireAuth,
 } from './lib/auth.js';
 import { sendInvitation, sendCompletion, sendDeclined, sendReminder, emailMode } from './lib/email.js';
@@ -53,12 +53,18 @@ const q = {
   fieldsForRecip: db.prepare('SELECT * FROM fields WHERE recipient_id = ? ORDER BY page'),
 };
 
+// Never expose the access-code hash; surface only whether a code is set.
+function publicRecipient(r) {
+  const { access_code_hash, ...rest } = r;
+  return { ...rest, has_access_code: !!access_code_hash };
+}
+
 function docPayload(id) {
   const document = q.doc.get(id);
   if (!document) return null;
   return {
     document,
-    recipients: q.recips.all(id),
+    recipients: q.recips.all(id).map(publicRecipient),
     fields: q.fields.all(id),
   };
 }
@@ -221,6 +227,20 @@ app.put('/api/documents/:id/prepare', (req, res) => {
   const { recipients = [], fields = [] } = req.body;
   if (!recipients.length) return res.status(400).json({ error: 'Add at least one recipient.' });
 
+  // Access codes are write-only: a save either sets a new code, keeps the one
+  // already stored for that email (keep_code), or clears it. Snapshot existing
+  // hashes before the delete-and-recreate below.
+  const prevCodeByEmail = {};
+  for (const r of q.recips.all(d.id)) {
+    if (r.access_code_hash) prevCodeByEmail[r.email.toLowerCase()] = r.access_code_hash;
+  }
+  for (const r of recipients) {
+    if (r.access_code != null && r.access_code !== '' &&
+        (String(r.access_code).length < 4 || String(r.access_code).length > 64)) {
+      return res.status(400).json({ error: 'Access codes must be 4–64 characters.' });
+    }
+  }
+
   transaction(() => {
     db.prepare('DELETE FROM fields WHERE document_id = ?').run(d.id);
     db.prepare('DELETE FROM recipients WHERE document_id = ?').run(d.id);
@@ -228,13 +248,17 @@ app.put('/api/documents/:id/prepare', (req, res) => {
     // Map the client's temporary recipient keys to real ids.
     const idFor = {};
     const insRecip = db.prepare(
-      `INSERT INTO recipients (id, document_id, name, email, signing_order, token, status)
-       VALUES (?, ?, ?, ?, ?, ?, 'pending')`
+      `INSERT INTO recipients (id, document_id, name, email, signing_order, token, status, access_code_hash)
+       VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)`
     );
     recipients.forEach((r, i) => {
       const rid = newId();
       idFor[r.key ?? r.id ?? i] = rid;
-      insRecip.run(rid, d.id, (r.name || '').trim(), (r.email || '').trim(), Number(r.signing_order) || i + 1, newToken());
+      const email = (r.email || '').trim();
+      const codeHash = r.access_code
+        ? hashPassword(String(r.access_code))
+        : (r.keep_code ? prevCodeByEmail[email.toLowerCase()] || null : null);
+      insRecip.run(rid, d.id, (r.name || '').trim(), email, Number(r.signing_order) || i + 1, newToken(), codeHash);
     });
 
     const insField = db.prepare(
@@ -379,7 +403,7 @@ app.post('/api/documents/:id/remind', asyncH(async (req, res) => {
 app.get('/api/documents/:id/audit', (req, res) => {
   const d = ownedDoc(req, res);
   if (!d) return;
-  res.json({ document: d, recipients: q.recips.all(d.id), events: getEvents(d.id), certInfo: getCertInfo() });
+  res.json({ document: d, recipients: q.recips.all(d.id).map(publicRecipient), events: getEvents(d.id), certInfo: getCertInfo() });
 });
 
 // Full audit record as a downloadable JSON file (compliance/legal handoff).
@@ -390,7 +414,7 @@ app.get('/api/documents/:id/audit.json', (req, res) => {
     exportedAt: nowIso(),
     document: d,
     signingCertificate: getCertInfo(),
-    recipients: q.recips.all(d.id),
+    recipients: q.recips.all(d.id).map(publicRecipient),
     fields: q.fields.all(d.id).map(({ value, ...f }) => f), // omit raw signature images
     events: getEvents(d.id),
   };
@@ -489,6 +513,9 @@ function blockedByOrder(recipient) {
   return ahead.length > 0;
 }
 
+// A signer with an access code set must verify it before seeing the document.
+const codeGated = (r) => !!r.access_code_hash && !r.code_verified_at;
+
 app.get('/api/sign/:token', (req, res) => {
   const v = signerView(req.params.token);
   if (!v) return res.status(404).json({ error: 'Invalid or expired signing link.' });
@@ -496,6 +523,14 @@ app.get('/api/sign/:token', (req, res) => {
   if (recipient.status === 'pending') {
     db.prepare(`UPDATE recipients SET status='viewed', viewed_at=? WHERE id=?`).run(nowIso(), recipient.id);
     logEvent(document.id, { recipientId: recipient.id, type: 'signer.viewed', detail: recipient.email, req });
+  }
+  if (codeGated(recipient)) {
+    // Reveal nothing beyond what's needed to prompt for the code.
+    return res.json({
+      codeRequired: true,
+      document: { title: document.title, status: document.status },
+      recipient: { name: recipient.name },
+    });
   }
   res.json({
     document: { id: document.id, title: document.title, status: document.status },
@@ -511,9 +546,33 @@ app.get('/api/sign/:token', (req, res) => {
   });
 });
 
+// Verify a signer's access code. Tightly throttled: 10 tries per 10 minutes
+// per IP+token on top of the general signer limiter.
+const codeLimiter = rateLimit({ max: 10, windowMs: 10 * 60_000, message: 'Too many code attempts. Please wait a few minutes.' });
+app.post('/api/sign/:token/verify-code', codeLimiter, (req, res) => {
+  const v = signerView(req.params.token);
+  if (!v) return res.status(404).json({ error: 'Invalid link.' });
+  const { recipient, document } = v;
+  if (!recipient.access_code_hash) return res.json({ ok: true }); // nothing to verify
+  const code = String(req.body?.code || '');
+  if (!code || !verifyPassword(code, recipient.access_code_hash)) {
+    logEvent(document.id, { recipientId: recipient.id, type: 'signer.code_failed', detail: recipient.email, req });
+    return res.status(401).json({ error: 'That access code is incorrect.' });
+  }
+  db.prepare('UPDATE recipients SET code_verified_at=? WHERE id=?').run(nowIso(), recipient.id);
+  logEvent(document.id, {
+    recipientId: recipient.id,
+    type: 'signer.code_verified',
+    detail: `${recipient.name} verified the access code`,
+    req,
+  });
+  res.json({ ok: true });
+});
+
 app.get('/api/sign/:token/file', (req, res) => {
   const v = signerView(req.params.token);
   if (!v) return res.status(404).end();
+  if (codeGated(v.recipient)) return res.status(403).end();
   res.type('application/pdf').sendFile(v.document.file_path);
 });
 
@@ -521,6 +580,7 @@ app.post('/api/sign/:token/consent', (req, res) => {
   const v = signerView(req.params.token);
   if (!v) return res.status(404).json({ error: 'Invalid link.' });
   const { recipient, document } = v;
+  if (codeGated(recipient)) return res.status(403).json({ error: 'Access code required.' });
   db.prepare(`UPDATE recipients SET consent_at=?, ip=?, user_agent=? WHERE id=?`).run(
     nowIso(), clientIp(req), req.get('user-agent') || null, recipient.id
   );
@@ -538,6 +598,7 @@ app.post('/api/sign/:token/decline', asyncH(async (req, res) => {
   const v = signerView(req.params.token);
   if (!v) return res.status(404).json({ error: 'Invalid link.' });
   const { recipient, document } = v;
+  if (codeGated(recipient)) return res.status(403).json({ error: 'Access code required.' });
   if (recipient.status === 'signed') return res.status(409).json({ error: 'You have already signed.' });
   if (document.status === 'completed') return res.status(409).json({ error: 'This document is already complete.' });
   const reason = String(req.body?.reason || '').slice(0, 500).trim();
@@ -576,6 +637,7 @@ app.post(
     const v = signerView(req.params.token);
     if (!v) return res.status(404).json({ error: 'Invalid link.' });
     const { recipient, document } = v;
+    if (codeGated(recipient)) return res.status(403).json({ error: 'Access code required.' });
     if (document.status !== 'sent') return res.status(409).json({ error: 'This document is not open for signing.' });
     if (recipient.status === 'signed') return res.status(409).json({ error: 'You have already signed.' });
     if (!recipient.consent_at) return res.status(400).json({ error: 'Consent is required before signing.' });

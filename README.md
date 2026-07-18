@@ -68,7 +68,7 @@ All optional — sensible local defaults are used if unset.
 |---|---|
 | Intent to sign | Explicit draw/type + "Finish & submit" confirmation |
 | Consent to e-records | Mandatory ESIGN/UETA disclosure + checkbox before signing |
-| Attribution | Unique per-signer email + unguessable token; IP, user-agent, timestamps captured |
+| Attribution | Unique per-signer email + unguessable token; optional per-signer **access code** (shared out-of-band, stored scrypt-hashed, verification audited); IP, user-agent, timestamps captured |
 | Integrity / tamper-evidence | SHA-256 at send + at completion, a **PKCS#7 digital seal** over the finished PDF (verifiable in Adobe Reader), **plus an RFC-3161 trusted timestamp** proving when it existed |
 | Audit trail | Every action logged (created, sent, invited, reminded, viewed, consented, signed, declined, sealed, timestamped, completed) |
 | Retention | Original + sealed PDF + timestamp token + audit stored and downloadable; certificate embedded in the final PDF |
@@ -130,7 +130,8 @@ This detached token proves *when*; it complements the PKCS#7 seal that proves
 
 ## Honest limitations (this is still a basic app)
 
-- **Stronger identity verification** — email + link proves control of an inbox, not
+- **Stronger identity verification** — email + link proves control of an inbox, and
+  the optional access code adds a something-you-know factor, but neither proves
   legal identity. Add SMS/OTP, knowledge-based auth, or ID verification for
   high-value agreements.
 - **Embedded PAdES timestamp / LTV** — the RFC-3161 token is stored as a detached

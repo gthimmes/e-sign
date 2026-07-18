@@ -38,7 +38,7 @@ async function init() {
   data.recipients.forEach((r, i) => {
     const key = keySeq++;
     keyById[r.id] = key;
-    recipients.push({ key, name: r.name, email: r.email, color: COLORS[i % COLORS.length] });
+    recipients.push({ key, name: r.name, email: r.email, color: COLORS[i % COLORS.length], hasCode: !!r.has_access_code });
   });
   data.fields.forEach((f) => {
     fields.push({
@@ -154,7 +154,9 @@ function renderRecipients() {
         ${recipients.length > 1 ? `<button class="btn sm danger" data-del="${r.key}">✕</button>` : ''}
       </div>
       <input type="text" placeholder="Full name" data-f="name" data-k="${r.key}" value="${escAttr(r.name)}"/>
-      <input type="email" placeholder="Email address" data-f="email" data-k="${r.key}" value="${escAttr(r.email)}" style="margin-top:6px"/>`;
+      <input type="email" placeholder="Email address" data-f="email" data-k="${r.key}" value="${escAttr(r.email)}" style="margin-top:6px"/>
+      <input type="text" autocomplete="off" data-f="access_code" data-k="${r.key}" style="margin-top:6px"
+        placeholder="${r.hasCode ? '🔒 Access code set — type to replace' : 'Access code (optional)'}" value="${escAttr(r.access_code || '')}"/>`;
     box.appendChild(div);
   });
   box.querySelectorAll('input').forEach((inp) => {
@@ -300,6 +302,9 @@ function validate() {
   for (const r of recipients) {
     if (!r.name.trim() || !r.email.trim()) return 'Every signer needs a name and email.';
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(r.email.trim())) return `“${r.email}” is not a valid email.`;
+    if (r.access_code && (r.access_code.length < 4 || r.access_code.length > 64)) {
+      return 'Access codes must be 4–64 characters.';
+    }
   }
   for (const r of recipients) {
     if (!fields.some((f) => f.recipientKey === r.key)) return `Add at least one field for ${r.name || 'each signer'}.`;
@@ -314,7 +319,12 @@ function validate() {
 
 async function save() {
   const payload = {
-    recipients: recipients.map((r, i) => ({ key: r.key, name: r.name, email: r.email, signing_order: i + 1 })),
+    recipients: recipients.map((r, i) => ({
+      key: r.key, name: r.name, email: r.email, signing_order: i + 1,
+      // access_code sets/replaces; keep_code preserves an already-stored code.
+      access_code: r.access_code || undefined,
+      keep_code: !r.access_code && r.hasCode ? true : undefined,
+    })),
     fields: fields.map((f) => ({
       recipientKey: f.recipientKey, page: f.page, type: f.type,
       x_ratio: f.x_ratio, y_ratio: f.y_ratio, w_ratio: f.w_ratio, h_ratio: f.h_ratio,
