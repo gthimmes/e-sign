@@ -412,6 +412,79 @@ assert((await res.json()).user === null, 'all sessions revoked by reset');
 res = await api('/api/auth/login', { method: 'POST', json: { email: 'owner@test.local', password: 'brandnewpass1' } });
 assert(res.ok, 'reset password logs in');
 
+// ---- encryption at rest --------------------------------------------------
+
+section('encryption at rest');
+{
+  const PORT2 = PORT + 1000;
+  const BASE2 = `http://localhost:${PORT2}`;
+  const SCRATCH2 = fs.mkdtempSync(path.join(os.tmpdir(), 'inkwell-enc-'));
+  const child2 = spawn(process.execPath, ['server.js'], {
+    cwd: ROOT,
+    env: {
+      ...process.env,
+      PORT: String(PORT2),
+      INKWELL_DATA_DIR: path.join(SCRATCH2, 'data'),
+      INKWELL_UPLOAD_DIR: path.join(SCRATCH2, 'uploads'),
+      AUTH_RATE_MAX: '100000', SIGN_RATE_MAX: '100000',
+      TSA_URL: 'http://127.0.0.1:9/tsr', SMTP_HOST: '',
+      DATA_KEY: 'test-secret-key',
+    },
+    stdio: 'ignore',
+  });
+  try {
+    for (let i = 0; ; i++) {
+      try { await fetch(`${BASE2}/api/auth/me`); break; }
+      catch { if (i > 50) throw new Error('encrypted server never came up'); await new Promise((r) => setTimeout(r, 200)); }
+    }
+    let cookie2 = '';
+    const api2 = async (p, { method = 'GET', json, form } = {}) => {
+      const headers = { cookie: cookie2 };
+      let body;
+      if (json) { headers['content-type'] = 'application/json'; body = JSON.stringify(json); }
+      if (form) body = form;
+      const r = await fetch(BASE2 + p, { method, headers, body });
+      const sc = r.headers.get('set-cookie');
+      if (sc) cookie2 = sc.split(';')[0];
+      return r;
+    };
+    res = await api2('/api/auth/register', { method: 'POST', json: { email: 'enc@test.local', name: 'Enc', password: 'password123' } });
+    assert(res.ok, 'encrypted instance up + register');
+    const form = new FormData();
+    form.append('title', 'Secret Doc');
+    form.append('pdf', new Blob([await makePdf(1)], { type: 'application/pdf' }), 's.pdf');
+    res = await api2('/api/documents', { method: 'POST', form });
+    const encDoc = await res.json();
+    assert(res.ok, 'upload on encrypted instance');
+    const diskFiles = fs.readdirSync(path.join(SCRATCH2, 'uploads'));
+    const uploadRaw = fs.readFileSync(path.join(SCRATCH2, 'uploads', diskFiles.find((f) => f.endsWith('.pdf'))));
+    assert(uploadRaw.subarray(0, 6).toString() === 'IWENC1', 'upload is ciphertext on disk');
+    assert(!uploadRaw.includes('%PDF-'), 'no plaintext PDF marker on disk');
+    res = await api2(`/api/documents/${encDoc.id}/file`);
+    assert(Buffer.from(await res.arrayBuffer()).subarray(0, 5).toString() === '%PDF-', 'API decrypts transparently');
+    await api2(`/api/documents/${encDoc.id}/prepare`, { method: 'PUT', json: {
+      recipients: [{ key: 1, name: 'Sec', email: 'sec@test.local', signing_order: 1 }],
+      fields: [sigField(1)],
+    } });
+    res = await api2(`/api/documents/${encDoc.id}/send`, { method: 'POST' });
+    assert(res.ok, 'send on encrypted instance');
+    const encTok = tokenOf((await res.json()).links[0].url);
+    let r2 = await api2(`/api/sign/${encTok}`);
+    const encView = await r2.json();
+    await api2(`/api/sign/${encTok}/consent`, { method: 'POST' });
+    r2 = await api2(`/api/sign/${encTok}/complete`, { method: 'POST', json: { values: { [encView.fields[0].id]: PNG } } });
+    assert(r2.ok, 'complete + seal on encrypted instance');
+    const finalRaw = fs.readFileSync(path.join(SCRATCH2, 'uploads', `${encDoc.id}-final.pdf`));
+    assert(finalRaw.subarray(0, 6).toString() === 'IWENC1', 'sealed final is ciphertext on disk');
+    r2 = await api2(`/api/documents/${encDoc.id}/final`);
+    const finalBuf = Buffer.from(await r2.arrayBuffer());
+    assert(finalBuf.subarray(0, 5).toString() === '%PDF-' && finalBuf.includes('/ByteRange'), 'decrypted final is a sealed PDF');
+  } finally {
+    try { child2.kill(); } catch { /* already dead */ }
+    setTimeout(() => { try { fs.rmSync(SCRATCH2, { recursive: true, force: true }); } catch { /* WAL */ } }, 400);
+  }
+}
+
 // ---- rate limiter (unit) -------------------------------------------------
 
 section('rate limiter');

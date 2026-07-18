@@ -16,6 +16,7 @@ import {
   setSessionCookie, clearSessionCookie, loadUser, requireAuth,
 } from './lib/auth.js';
 import { sendInvitation, sendCompletion, sendDeclined, sendReminder, sendPasswordReset, sendVerification, emailMode } from './lib/email.js';
+import { readFileStored, writeFileStored, encryptionAtRest } from './lib/filestore.js';
 import { rateLimit } from './lib/ratelimit.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -44,11 +45,10 @@ const newExpiry = () => new Date(Date.now() + LINK_EXPIRY_DAYS * 864e5).toISOStr
 const linkExpired = (r) =>
   r.status !== 'signed' && !!r.token_expires_at && Date.parse(r.token_expires_at) < Date.now();
 
+// Files land in memory first so they can be written through the (optionally
+// encrypting) file store rather than straight to disk.
 const upload = multer({
-  storage: multer.diskStorage({
-    destination: UPLOAD_DIR,
-    filename: (_req, file, cb) => cb(null, `${newId()}${path.extname(file.originalname) || '.pdf'}`),
-  }),
+  storage: multer.memoryStorage(),
   limits: { fileSize: 25 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => cb(null, file.mimetype === 'application/pdf'),
 });
@@ -279,21 +279,22 @@ app.post(
   upload.single('pdf'),
   asyncH(async (req, res) => {
     if (!req.file) return res.status(400).json({ error: 'A PDF file is required.' });
-    const bytes = await fsp.readFile(req.file.path);
+    const bytes = req.file.buffer;
     // Validate it really is a loadable PDF and grab a page count.
     let pageCount = 0;
     try {
       pageCount = (await PDFDocument.load(bytes)).getPageCount();
     } catch {
-      await fsp.unlink(req.file.path).catch(() => {});
       return res.status(400).json({ error: 'That file could not be read as a PDF.' });
     }
     const id = newId();
+    const filePath = path.join(UPLOAD_DIR, `${id}.pdf`);
+    await writeFileStored(filePath, bytes);
     const title = (req.body.title || req.file.originalname.replace(/\.pdf$/i, '')).slice(0, 200);
     db.prepare(
       `INSERT INTO documents (id, title, original_name, file_path, status, created_at, owner_id)
        VALUES (?, ?, ?, ?, 'draft', ?, ?)`
-    ).run(id, title, req.file.originalname, req.file.path, nowIso(), req.user.id);
+    ).run(id, title, req.file.originalname, filePath, nowIso(), req.user.id);
     logEvent(id, { type: 'document.created', detail: `${title} (${pageCount} pages)`, req });
     res.json({ id, pageCount });
   })
@@ -359,11 +360,11 @@ app.get('/api/documents/:id', (req, res) => {
 });
 
 // Serve the original PDF bytes (authoring / preview).
-app.get('/api/documents/:id/file', (req, res) => {
+app.get('/api/documents/:id/file', asyncH(async (req, res) => {
   const d = ownedDoc(req, res);
   if (!d) return;
-  res.type('application/pdf').sendFile(d.file_path);
-});
+  res.type('application/pdf').send(await readFileStored(d.file_path));
+}));
 
 // Save recipients + field placements. Only allowed while in draft.
 app.put('/api/documents/:id/prepare', (req, res) => {
@@ -450,7 +451,7 @@ app.post('/api/documents/:id/send', asyncH(async (req, res) => {
   if (withoutField.length)
     return res.status(400).json({ error: `Every signer needs at least one field: ${withoutField.map((r) => r.name).join(', ')}` });
 
-  const bytes = fs.readFileSync(d.file_path);
+  const bytes = await readFileStored(d.file_path);
   const hash = sha256(bytes);
   db.prepare(`UPDATE documents SET status='sent', sent_at=?, sha256_sent=? WHERE id=?`).run(nowIso(), hash, d.id);
   db.prepare(`UPDATE recipients SET token_expires_at=? WHERE document_id=?`).run(newExpiry(), d.id);
@@ -485,7 +486,7 @@ app.post('/api/documents/:id/bulk-send', asyncH(async (req, res) => {
   if (bad) return res.status(400).json({ error: `Every recipient needs a name and a valid email (check “${bad.name || bad.email || 'blank line'}”).` });
 
   // The template's pages must exist in this document.
-  const srcBytes = await fsp.readFile(d.file_path);
+  const srcBytes = await readFileStored(d.file_path);
   const pageCount = (await PDFDocument.load(srcBytes)).getPageCount();
   const maxPage = Math.max(...tplFields.map((f) => f.page));
   if (maxPage > pageCount) {
@@ -497,7 +498,7 @@ app.post('/api/documents/:id/bulk-send', asyncH(async (req, res) => {
   for (const r of recipients) {
     const docId = newId();
     const filePath = path.join(UPLOAD_DIR, `${docId}.pdf`);
-    await fsp.copyFile(d.file_path, filePath);
+    await writeFileStored(filePath, srcBytes);
     const rid = newId();
     const token = newToken();
     transaction(() => {
@@ -605,24 +606,24 @@ app.get('/api/documents/:id/audit.csv', (req, res) => {
     .send(csv);
 });
 
-app.get('/api/documents/:id/final', (req, res) => {
+app.get('/api/documents/:id/final', asyncH(async (req, res) => {
   const d = ownedDoc(req, res);
   if (!d) return;
   if (!d.final_path) return res.status(404).json({ error: 'Not completed yet.' });
   res.type('application/pdf')
     .setHeader('Content-Disposition', `attachment; filename="${safeName(d.title)}-signed.pdf"`);
-  res.sendFile(d.final_path);
-});
+  res.send(await readFileStored(d.final_path));
+}));
 
 // Download the RFC-3161 timestamp token (verifiable with `openssl ts -verify`).
-app.get('/api/documents/:id/timestamp', (req, res) => {
+app.get('/api/documents/:id/timestamp', asyncH(async (req, res) => {
   const d = ownedDoc(req, res);
   if (!d) return;
   if (!d.tsr_path) return res.status(404).json({ error: 'No trusted timestamp for this document.' });
   res.type('application/timestamp-reply')
     .setHeader('Content-Disposition', `attachment; filename="${safeName(d.title)}.tsr"`);
-  res.sendFile(d.tsr_path);
-});
+  res.send(await readFileStored(d.tsr_path));
+}));
 
 // ---- notifications -------------------------------------------------------
 
@@ -757,17 +758,17 @@ app.post('/api/sign/:token/verify-code', codeLimiter, (req, res) => {
   res.json({ ok: true });
 });
 
-app.get('/api/sign/:token/file', (req, res) => {
+app.get('/api/sign/:token/file', asyncH(async (req, res) => {
   const v = signerView(req.params.token);
   if (!v) return res.status(404).end();
   if (linkExpired(v.recipient)) return res.status(410).end();
   if (codeGated(v.recipient)) return res.status(403).end();
-  res.type('application/pdf').sendFile(v.document.file_path);
-});
+  res.type('application/pdf').send(await readFileStored(v.document.file_path));
+}));
 
 // ESIGN retention: every signer can download the completed, sealed PDF from
 // their own link once all parties have signed.
-app.get('/api/sign/:token/final', (req, res) => {
+app.get('/api/sign/:token/final', asyncH(async (req, res) => {
   const v = signerView(req.params.token);
   if (!v) return res.status(404).end();
   const { recipient, document } = v;
@@ -778,8 +779,8 @@ app.get('/api/sign/:token/final', (req, res) => {
   logEvent(document.id, { recipientId: recipient.id, type: 'signer.downloaded_final', detail: recipient.email, req });
   res.type('application/pdf')
     .setHeader('Content-Disposition', `attachment; filename="${safeName(document.title)}-signed.pdf"`);
-  res.sendFile(document.final_path);
-});
+  res.send(await readFileStored(document.final_path));
+}));
 
 app.post('/api/sign/:token/consent', (req, res) => {
   const v = signerView(req.params.token);
@@ -884,11 +885,12 @@ app.post(
     if (recips.every((r) => r.status === 'signed')) {
       const fields = q.fields.all(document.id);
       const certInfo = getCertInfo();
-      const { bytes } = await buildFinalPdf({ document, recipients: recips, fields, certInfo });
+      const originalBytes = await readFileStored(document.file_path);
+      const { bytes } = await buildFinalPdf({ document, originalBytes, recipients: recips, fields, certInfo });
       const sealed = await sealPdf(bytes, { reason: `Completed via InkWell — ${document.title}` });
       const finalHash = sha256(sealed);
       const finalPath = path.join(UPLOAD_DIR, `${document.id}-final.pdf`);
-      await fsp.writeFile(finalPath, sealed);
+      await writeFileStored(finalPath, sealed);
       db.prepare(`UPDATE documents SET status='completed', completed_at=?, sha256_final=?, final_path=? WHERE id=?`).run(
         nowIso(), finalHash, finalPath, document.id
       );
@@ -902,7 +904,7 @@ app.post(
       const ts = await timestamp(sealed);
       if (ts) {
         const tsrPath = path.join(UPLOAD_DIR, `${document.id}.tsr`);
-        await fsp.writeFile(tsrPath, ts.tokenDer);
+        await writeFileStored(tsrPath, ts.tokenDer);
         db.prepare(`UPDATE documents SET tsa_time=?, tsa_url=?, tsr_path=? WHERE id=?`).run(
           ts.genTime, ts.tsaUrl, tsrPath, document.id
         );
